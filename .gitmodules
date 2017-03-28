@@ -1,0 +1,3 @@
+[submodule "BiblioWikidata"]
+	path = BiblioWikidata
+	url = https://github.com/harej/BiblioWikidata
