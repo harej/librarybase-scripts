@@ -23,6 +23,7 @@ CG = citation_grapher.CitationGrapher(
 
 
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
+
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 pmcid_seed = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
 
@@ -46,16 +47,34 @@ for thing in pmcid_list:
 
 del pmcid_list
 
-pmid_seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
+pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
 
-for x in requests.get(pmid_seed).json()["results"]["bindings"]:
-    pmid = x["pmid"]["value"]
-    item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
+r = requests.get(pmid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
+with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
+    for chunk in r.iter_content(chunk_size=1024):
+        f.write(chunk)
 
-    REDIS.setex(
-        'pmid_to_wikidata:' + pmid,
-         item,
-         timedelta(days=7))
+with open('/tmp/pmid2wikidata.tsv') as f:
+    packages = [{}]
+    package_counter = 0
+    for linenum, line in enumerate(f):
+        line = line.replace('\0', '').split('\t')
+        if len(line) < 2:
+            continue
+        pmid = line[1].strip()
+        item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
+        packages[package_counter][pmid] = item
+        if linenum > 0 and linenum % 50 == 0:
+            packages.append({})
+            package_counter += 1
+
+    cntr = 0
+    for package in packages:
+        print('Saving PMID package ' + str(cntr))
+        cntr += 1
+        REDIS.hmset(
+            'pmid_to_wikidata',
+             package)
 
 nonexistent_pmid = Counter()
 
@@ -65,10 +84,13 @@ def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
         cited_id = str(cited_id)
-        cited_item = REDIS.get('pmid_to_wikidata:' + cited_id)
+        cited_item = REDIS.hget('pmid_to_wikidata', cited_id)
         if cited_item is None:
+            #print('The cited id "' + cited_id + '" is not on Wikidata')
             nonexistent_pmid[cited_id] += 1
             continue
+        else:
+            cited_item = cited_item.decode('utf-8')
         if wikidata_item == cited_item:
             continue
         cites.append(cited_item)
@@ -163,7 +185,7 @@ class UpdateGraph(threading.Thread):
             print('Processed ' + manifest[0][0] + ' through ' + manifest[len(manifest) - 1][0])
 
 def main():
-    # First, work off of the Redis cache.s
+    # First, work off of the Redis cache.
     # Lookups that have been cached go to the "fast track"
     # Otherwise, send to the "slow track"
 
