@@ -6,7 +6,7 @@ import requests
 import threading
 import time
 from BiblioWikidata import JournalArticles
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from datetime import timedelta
 from mem_top import mem_top
 
@@ -26,19 +26,20 @@ REDIS = redis.Redis(host='127.0.0.1', port=6379)
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 pmcid_seed = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
 
-pmcid_list = []  # list of tuples: (wikidata item, PMCID)
+pmcid_list = []  # list of strings: "wikidata item|pmcid"
 
 for x in requests.get(pmcid_seed).json()["results"]["bindings"]:
     item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
     pmcid = x["pmcid"]["value"]
-    pmcid_list.append((item, pmcid))
+    pmcid_list.append(item + '|' + pmcid)
 
 pmcid_list = list(set(pmcid_list))  # Removing duplicates
 pmcid_list.sort(reverse=True)
 
 pmcid_to_wikidata = OrderedDict()
 
-for pair in pmcid_list:
+for thing in pmcid_list:
+    pair = thing.split('|')
     item = pair[0]
     pmcid = pair[1]
     pmcid_to_wikidata[pmcid] = item
@@ -46,23 +47,28 @@ for pair in pmcid_list:
 del pmcid_list
 
 pmid_seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
-pmid_to_wikidata = {x["pmid"]["value"]: x["item"]["value"].replace("http://www.wikidata.org/entity/", "") \
-                    for x in requests.get(pmid_seed).json()["results"]["bindings"]}
 
-nonexistent_pmid = {}
+for x in requests.get(pmid_seed).json()["results"]["bindings"]:
+    pmid = x["pmid"]["value"]
+    item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
+
+    REDIS.setex(
+        'pmid_to_wikidata:' + pmid,
+         item,
+         timedelta(days=7))
+
+nonexistent_pmid = Counter()
 
 print('Done setting up globals')  # debug
 
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
-        if str(cited_id) not in pmid_to_wikidata:
-            if str(cited_id) in nonexistent_pmid:
-                nonexistent_pmid[str(cited_id)] += 1
-            else:
-                nonexistent_pmid[str(cited_id)] = 1
+        cited_id = str(cited_id)
+        cited_item = REDIS.get('pmid_to_wikidata:' + cited_id)
+        if cited_item is None:
+            nonexistent_pmid[cited_id] += 1
             continue
-        cited_item = pmid_to_wikidata[str(cited_id)]
         if wikidata_item == cited_item:
             continue
         cites.append(cited_item)
