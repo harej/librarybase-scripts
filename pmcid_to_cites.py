@@ -25,14 +25,23 @@ CG = citation_grapher.CitationGrapher(
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
-pmcid_seed = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
+pmcid_seed = "https://query.wikidata.org/sparql?query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
 
 pmcid_list = []  # list of strings: "wikidata item|pmcid"
 
-for x in requests.get(pmcid_seed).json()["results"]["bindings"]:
-    item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
-    pmcid = x["pmcid"]["value"]
-    pmcid_list.append(item + '|' + pmcid)
+r = requests.get(pmcid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
+with open('/tmp/pmcid2wikidata.tsv', 'wb') as f:
+    for chunk in r.iter_content(chunk_size=1024):
+        f.write(chunk)
+
+with open('/tmp/pmcid2wikidata.tsv') as f:
+    for line in f:
+        line = line.replace('\0', '').split('\t')
+        if len(line) < 2:
+            continue
+        item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
+        pmcid = line[1].strip()
+        pmcid_list.append(item + '|' + pmcid)
 
 pmcid_list = list(set(pmcid_list))  # Removing duplicates
 pmcid_list.sort(reverse=True)
