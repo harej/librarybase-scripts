@@ -2,6 +2,7 @@ from BiblioWikidata import JournalArticles
 import csv
 import requests
 from pprint import pprint
+from urllib.parse import unquote
 
 def main(manifestfile):
 
@@ -17,7 +18,11 @@ def main(manifestfile):
 	with open(manifestfile) as f:
 		s = csv.reader(f)
 		for row in s:
-			to_generate.append(row[0].upper())
+			to_add = row[0].upper()
+			to_add = to_add.strip()
+			to_add = unquote(to_add)
+			to_add = to_add.replace('/abstract', '').replace('/full', '').replace('/pdf', '')
+			to_generate.append(to_add)
 
 	to_generate = list(set(to_generate) - set(do_not_generate))
 	print(str(len(to_generate)) + ' items to generate.')

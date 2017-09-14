@@ -1,128 +1,243 @@
+import citation_grapher
+import ast
 import arrow
+import redis
 import requests
-from wikidataintegrator import wdi_core, wdi_login
-from site_credentials import *
+import threading
+import time
+from BiblioWikidata import JournalArticles
+from collections import OrderedDict
+from datetime import timedelta
+from mem_top import mem_top
 
-def main():
-    WIKIDATA = wdi_login.WDLogin(user=site_username, pwd=site_password)
-    pmcid_seed = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
-    pmid_seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
-    pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&tool=wikidata_worker&email=jamesmhare@gmail.com&retmode=json"
+print('Setting up globals')  # debug
 
-    pmcid_list_raw = requests.get(pmcid_seed).json()["results"]["bindings"]
-    pmcid_to_wikidata = {}
-    pmcid_list = []  # list of tuples: (wikidata item, PMCID)
-    for x in pmcid_list_raw:
-        item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
-        pmcid = x["pmcid"]["value"]
+WRITE_THREAD_COUNT = 2
+READ_THREAD_COUNT = 4
+THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
-        pmcid_to_wikidata[pmcid] = item
-        pmcid_list.append((item, pmcid))
+CG = citation_grapher.CitationGrapher(
+    'Q229883',
+    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
+    write_thread_count=WRITE_THREAD_COUNT)
 
-    get_pmid_list = requests.get(pmid_seed)
-    pmid_blob = get_pmid_list.json()
-    pmid_to_wikidata = {x["pmid"]["value"]: x["item"]["value"].replace("http://www.wikidata.org/entity/", "") for x in pmid_blob["results"]["bindings"]}
 
-    pmcid_list = list(set(pmcid_list))  # Removing duplicates
-    pmcid_list.sort(reverse=True)
-    packages = [pmcid_list[x:x+200] for x in range(0, len(pmcid_list), 200)]
+REDIS = redis.Redis(host='127.0.0.1', port=6379)
+pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
+pmcid_seed = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
 
-    print(str(len(packages)) + " packages")
+pmcid_list = []  # list of tuples: (wikidata item, PMCID)
 
-    for package in packages:
-        query_string = ""
-        for item in package:
-            query_string += "&id=" + item[1]
+for x in requests.get(pmcid_seed).json()["results"]["bindings"]:
+    item = x["item"]["value"].replace("http://www.wikidata.org/entity/", "")
+    pmcid = x["pmcid"]["value"]
+    pmcid_list.append((item, pmcid))
 
-        r = requests.get(pmc_template + query_string)
-        retrieve_date = arrow.utcnow().format('YYYY-MM-DD')
-        retrieve_date = '+' + retrieve_date + 'T00:00:00Z'
-        blob = r.json()
+pmcid_list = list(set(pmcid_list))  # Removing duplicates
+pmcid_list.sort(reverse=True)
 
+pmcid_to_wikidata = OrderedDict()
+
+for pair in pmcid_list:
+    item = pair[0]
+    pmcid = pair[1]
+    pmcid_to_wikidata[pmcid] = item
+
+del pmcid_list
+
+pmid_seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
+pmid_to_wikidata = {x["pmid"]["value"]: x["item"]["value"].replace("http://www.wikidata.org/entity/", "") \
+                    for x in requests.get(pmid_seed).json()["results"]["bindings"]}
+
+nonexistent_pmid = {}
+
+print('Done setting up globals')  # debug
+
+def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
+    cites = []
+    for cited_id in bundle:
+        if str(cited_id) not in pmid_to_wikidata:
+            if str(cited_id) in nonexistent_pmid:
+                nonexistent_pmid[str(cited_id)] += 1
+            else:
+                nonexistent_pmid[str(cited_id)] = 1
+            continue
+        cited_item = pmid_to_wikidata[str(cited_id)]
+        if wikidata_item == cited_item:
+            continue
+        cites.append(cited_item)
+
+    return (wikidata_item, pmcid, cites, retrieve_date)
+
+class UpdateGraphFast(threading.Thread):  # gotta go fast!
+    def __init__(self, threadID, name, package):
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.name = name
+        self.package = package
+
+    def run(self):
+        CG.process_manifest(self.package)
+        print('. ', end='')
+
+class UpdateGraph(threading.Thread):
+    def __init__ (self, threadID, name, package):
+        threading.Thread.__init__(self)
+        self.threadID = threadID
+        self.name = name
+        self.package = package
+
+    def run(self):
+        payload = {
+            'dbfrom': 'pmc',
+            'linkname': 'pmc_refs_pubmed',
+            'tool': 'wikidata_worker',
+            'email': 'jamesmhare@gmail.com',
+            'retmode': 'json',
+            'id': [x[1] for x in self.package]}
+
+        post_status = False
+
+        while post_status is False:
+            try:
+                r = requests.post(pmc_template, data=payload)
+                post_status = True
+            except requests.exceptions.ConnectionError:
+                print('Connection error in ' + self.name + ', trying again in five minutes.')
+                time.sleep(300)
+
+        if r.status_code != 200:
+            time.sleep(120)
+            r = requests.post(pmc_template, data=payload)
+
+            if r.status_code != 200:
+                time.sleep(300)
+                r = requests.post(pmc_template, data=payload)
+
+        now = arrow.utcnow()
+        retrieve_date = '+' + now.format('YYYY-MM-DD') + 'T00:00:00Z'
+
+        try:
+            blob = r.json()
+        except Exception as e:
+            print('ERROR: ' + str(r.status_code))
+            return
+
+        # Construct dataset
+        manifest = []  # list of tuples
         for result in blob["linksets"]:
-            if str(result["ids"][0]) not in pmcid_to_wikidata \
-            or 'linksetdbs' not in result:
+            if str(result["ids"][0]) not in pmcid_to_wikidata:
                 continue
             relevant_pmcid = str(result["ids"][0])
+            REDIS.setex(
+                'pmcid_to_cites__' + relevant_pmcid + '_retrieve_date',
+                retrieve_date,
+                timedelta(days=14))
+            if 'linksetdbs' not in result:
+                REDIS.setex(
+                    'pmcid_to_cites__' + relevant_pmcid,
+                    [],
+                    timedelta(days=14))
+                continue
             relevant_item = pmcid_to_wikidata[relevant_pmcid]
 
-            i = wdi_core.WDItemEngine(wd_item_id=relevant_item)
+            REDIS.setex(
+                'pmcid_to_cites__' + relevant_pmcid,
+                result["linksetdbs"][0]["links"],
+                timedelta(days=14))
+            add_to_manifest = create_manifest_entry(
+                relevant_item,
+                relevant_pmcid,
+                result["linksetdbs"][0]["links"],
+                retrieve_date)
+            manifest.append(add_to_manifest)
 
-            cites = []
+        if len(manifest) > 0:
+            CG.process_manifest(manifest)
+            print('Processed ' + manifest[0][0] + ' through ' + manifest[len(manifest) - 1][0])
 
-            # Creating a convenient data object for keeping track of existing
-            # 'cites' claims and their references on a given Wikidata item
-            references = {}
-            if 'P2860' in i.wd_json_representation['claims']:
-                extant_claims = i.wd_json_representation['claims']['P2860']
-                for claim in extant_claims:
-                    extant_cited_item = claim['mainsnak']['datavalue']['value']['id']
-                    
-                    for reference in claim['references']:
-                        snaks = {}
-                        for prop_nr, values in reference['snaks'].items():
-                            snaks[prop_nr] = [v['datavalue'] for v in values]
+def main():
+    # First, work off of the Redis cache.s
+    # Lookups that have been cached go to the "fast track"
+    # Otherwise, send to the "slow track"
 
-                    references[extant_cited_item] = snaks
+    slowtrack = []
+    fasttrack = []
+    thread_counter = 0
 
-            for cited_id in result["linksetdbs"][0]["links"]:
-                if str(cited_id) not in pmid_to_wikidata:
-                    continue
-                cited_item = pmid_to_wikidata[str(cited_id)]
-                if relevant_item == cited_item:
-                    continue
+    for pmcid, item in pmcid_to_wikidata.items():
 
-                # Don't generate a statement if the statement already exists and
-                # features a fully filled out citation. *Do* otherwise generate
-                # a statement, even if the statement exists, if it has a lousy,
-                # not-filled-out citation.
-                generate_statement = True
-                if cited_item in references:
-                    if 'P248' in references[cited_item] \
-                    and 'P813' in references[cited_item] \
-                    and 'P854' in references[cited_item]:
-                        for x in references[cited_item]['P248']:
-                            # stated in: PubMed Central
-                            if x['value']['id'] == 'Q229883':
-                                generate_statement = False
+        lookup = REDIS.get('pmcid_to_cites__' + pmcid)
+        lookup_retrieve_date = REDIS.get('pmcid_to_cites__' + pmcid + '_retrieve_date')
 
-                if generate_statement is False:
-                    continue
+        if lookup is None or lookup_retrieve_date is None:
+            slowtrack.append((item, pmcid))
+            if len(slowtrack) >= 250:
+                thread = UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack)
+                thread_counter += 1
+                while threading.active_count() >= THREAD_LIMIT:
+                    time.sleep(1)
+                thread.start()
+                time.sleep(1)
+                slowtrack = []
+                if thread_counter > 0 and thread_counter % 50 == 0:
+                    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                    #print('As of thread ' + str(thread_counter) + ':\n')
+                    #print(mem_top())  # debug
 
-                refblock  = [[wdi_core.WDItemID(
-                                  value='Q229883',
-                                  prop_nr='P248',
-                                  is_reference=True),
-                              wdi_core.WDUrl(
-                                  value='https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=' + relevant_pmcid,
-                                  prop_nr='P854',
-                                  is_reference=True),
-                              wdi_core.WDTime(
-                                  retrieve_date,
-                                  prop_nr='P813',
-                                  is_reference=True)]]
+        else:
+            bundle = ast.literal_eval(lookup.decode('UTF-8'))
+            bundle = [str(x) for x in bundle]
+            retrieve_date = lookup_retrieve_date.decode('UTF-8')
+            fasttrack.append(create_manifest_entry(item, pmcid, bundle, retrieve_date))
+            if len(fasttrack) >= 50:
+                thread = UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack)
+                thread_counter += 1
+                while threading.active_count() >= THREAD_LIMIT:
+                    time.sleep(1)
+                thread.start()
+                fasttrack = []
+                if thread_counter > 0 and thread_counter % 50 == 0:
+                    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                    #print('As of thread ' + str(thread_counter) + ':\n')
+                    #print(mem_top())  # debug
 
-                statement = wdi_core.WDItemID(
-                                value=cited_item,
-                                prop_nr='P2860',
-                                references=refblock)
+    if len(fasttrack) > 0:
+        for package in [fasttrack[x:x+50] for x in range(0, len(fasttrack), 50)]:
+            thread = UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), package)
+            thread_counter += 1
+            while threading.active_count() >= THREAD_LIMIT:
+                time.sleep(1)
+            thread.start()
+            time.sleep(1)
+            if thread_counter > 0 and thread_counter % 50 == 0:
+                print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                #print('As of thread ' + str(thread_counter) + ':\n')
+                #print(mem_top())  # debug
 
-                cites.append(statement)
+        print('\nProcessed ' + str(len(fasttrack)) + ' cached entries')
 
-            if len(cites) > 0:
-                i = wdi_core.WDItemEngine(
-                        wd_item_id=relevant_item,
-                        data=cites,
-                        append_value=['P2860'],
-                        good_refs=[{'P248': None, 'P813': None, 'P854': None}],
-                        keep_good_ref_statements=True)
-                try:
-                    print(i.write(WIKIDATA))
-                except Exception as e:
-                    print('Exception when trying to edit ' + relevant_item + '; skipping')
-                    print(e)
-            else:
-                print(relevant_item + ' has nothing to add; skipping')
+    packages = [slowtrack[x:x+250] for x in range(0, len(slowtrack), 250)]
+
+    threads = []
+    for package in packages:
+        threads.append(UpdateGraph(thread_counter, "thread-" + str(thread_counter), package))
+        thread_counter += 1
+    for thread in threads:
+        while threading.active_count() >= THREAD_LIMIT:
+            time.sleep(1)
+        thread.start()
+        time.sleep(1)
+    for thread in threads:
+        thread.join()
+
+    CG.eq.done()  # Tell the editor threads they can stop now
+
+    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+
+    for identifier, counter in nonexistent_pmid.items():
+        if counter >= 500:
+            JournalArticles.item_creator([{'pmid': identifier}])
 
 if __name__ == '__main__':
     main()

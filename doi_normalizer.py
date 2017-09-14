@@ -1,5 +1,19 @@
 import requests
 
+lines_to_print = []
+
+def process(wikidata_item, doi_list):
+    canonical = doi_list[0].upper()
+    canonical_is_present = False
+    for doi in doi_list:
+        if doi == canonical:
+            canonical_is_present = True
+        else:
+            lines_to_print.append("-" + wikidata_item + "|P356|\"" + doi + "\"||")
+
+    if canonical_is_present == False:
+        lines_to_print.append(wikidata_item + "|P356|\"" + canonical + "\"||")
+
 def main():
     # Canonical DOI format: all uppercase letters.
     # Three scenarios:
@@ -15,7 +29,7 @@ def main():
     #      If none are in matching format, create an entry in the necessary format and delete the others.
     #
     #   4. Two or more DOIs that are different even when normalized to uppercase:
-    #      Do nothing. This is a special case and requires manual intervention.
+    #      We normalize within that set. Still duplicate, but at least normalized.
 
     url = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fi%20%3Fdoi%20where%20%7B%20%3Fi%20wdt%3AP356%20%3Fdoi%20%7D%20order%20by%20%3Fi"
     seed = requests.get(url).json()["results"]["bindings"]
@@ -31,35 +45,19 @@ def main():
 
         manifest[wikidata_item].append(doi)
 
-    lines_to_print = []
-
     for wikidata_item, doi_list in manifest.items():
-
-        canonical = doi_list[0].upper()
 
         if len(doi_list) > 1:
             # Testing to see if all DOIs are the same when converted to uppercase.
             # If not, then it's case 4 and must be skipped.
 
-            requires_manual_intervention = False
-            for doi in doi_list[1:]:
-                if doi.upper() != canonical:
-                    requires_manual_intervention = True
-
-            if requires_manual_intervention == True:
-                continue
-
-            # Next: find out if the canonical is already in this list
-
-            canonical_is_present = False
+            doi_variants = {}  # canonical form: variant
             for doi in doi_list:
-                if doi == canonical:
-                    canonical_is_present = True
-                else:
-                    lines_to_print.append("-" + wikidata_item + "|P356|\"" + doi + "\"||")
-
-            if canonical_is_present == False:
-                lines_to_print.append(wikidata_item + "|P356|\"" + canonical + "\"||")
+                if doi.upper() not in doi_variants:
+                    doi_variants[doi.upper()] = []
+                doi_variants[doi.upper()].append(doi)
+            for variant_list in doi_variants.values():
+                process(wikidata_item, variant_list)
 
         else:
             if doi_list[0] != canonical:
@@ -77,7 +75,6 @@ def main():
             f.write(to_write)
         counter += 1
 
-    
 
 if __name__ == '__main__':
     main()

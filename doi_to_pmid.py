@@ -1,5 +1,9 @@
+import redis
 import requests
 import threading
+from datetime import timedelta
+
+REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
 class AskPubMed(threading.Thread):
     def __init__(self, threadID, name, package):
@@ -12,17 +16,30 @@ class AskPubMed(threading.Thread):
         for item in self.package:
             wikidata_item = item[0]
             doi = item[1]
+
+            if REDIS.get('doi_to_pmid__' + doi) is not None:
+                continue
+
             try:
                 r = requests.get("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?retmode=json&db=pubmed&term=" + doi).json()
             except (OSError, ValueError):
                 continue
 
+            found = False
             if "esearchresult" in r:
                 if "count" in r["esearchresult"]:
                     if r["esearchresult"]["count"] == "1":
                         if "errorlist" not in r["esearchresult"]:
+                            found = True
                             pmid = r["esearchresult"]["idlist"][0]
                             print(wikidata_item + "\tP698\t\"" + pmid + "\"")
+                            REDIS.set('doi_to_pmid__' + doi, pmid)
+
+            if found is False:
+                REDIS.setex(
+                    'doi_to_pmid__' + doi,
+                    '',
+                    timedelta(days=14))
 
 
 def main():
