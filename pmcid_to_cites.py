@@ -13,7 +13,7 @@ from mem_top import mem_top
 print('Setting up globals')  # debug
 
 WRITE_THREAD_COUNT = 2
-READ_THREAD_COUNT = 4
+READ_THREAD_COUNT = 2
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
 CG = citation_grapher.CitationGrapher(
@@ -63,27 +63,33 @@ with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
     for chunk in r.iter_content(chunk_size=1024):
         f.write(chunk)
 
+package = {}
+cntr = 0
 with open('/tmp/pmid2wikidata.tsv') as f:
-    packages = [{}]
-    package_counter = 0
     for linenum, line in enumerate(f):
         line = line.replace('\0', '').split('\t')
         if len(line) < 2:
             continue
         pmid = line[1].strip()
         item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
-        packages[package_counter][pmid] = item
+        package[pmid] = item
         if linenum > 0 and linenum % 50 == 0:
-            packages.append({})
-            package_counter += 1
+            print('Saving PMID package ' + str(cntr))
+            cntr += 1
+            REDIS.hmset(
+                'pmid_to_wikidata',
+                 package)
+            package = {}
 
-    cntr = 0
-    for package in packages:
-        print('Saving PMID package ' + str(cntr))
-        cntr += 1
-        REDIS.hmset(
-            'pmid_to_wikidata',
-             package)
+    # Save the last package
+    print('Saving PMID package ' + str(cntr))
+    cntr += 1
+    REDIS.hmset(
+        'pmid_to_wikidata',
+         package)
+
+del package
+del cntr
 
 nonexistent_pmid = Counter()
 
