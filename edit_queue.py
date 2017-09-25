@@ -3,6 +3,7 @@ import importlib
 import queue
 import threading
 import urllib.parse
+from time import sleep
 from wikidataintegrator import wdi_core
 from site_credentials import *
 
@@ -30,20 +31,6 @@ class EditQueue:
         for editor in self.editors:
             editor.start()
 
-    def get_reference(self, retrieve_date, relevant_external_id):
-        return [[wdi_core.WDItemID(
-                    value=self.source,
-                    prop_nr='P248',
-                    is_reference=True),
-                 wdi_core.WDUrl(
-                     value=self.url_pattern + urllib.parse.quote_plus(relevant_external_id),
-                     prop_nr='P854',
-                     is_reference=True),
-                 wdi_core.WDTime(
-                     retrieve_date,
-                     prop_nr='P813',
-                     is_reference=True)]]
-
     def do_edits(self, n, event):
         while True:
             try:
@@ -54,12 +41,25 @@ class EditQueue:
                 else:
                     continue
             try:
+                ref = [[wdi_core.WDItemID(
+                            value=self.source,
+                            prop_nr='P248',
+                            is_reference=True),
+                        wdi_core.WDUrl(
+                             value=self.url_pattern + urllib.parse.quote_plus(str(task[1])),
+                             prop_nr='P854',
+                             is_reference=True),
+                        wdi_core.WDTime(
+                             task[2],
+                             prop_nr='P813',
+                             is_reference=True)]]
+
                 data = []
                 for cited_item in task[3]:
                     data.append(wdi_core.WDItemID(
                                 value=cited_item,
                                 prop_nr='P2860',
-                                references=self.get_reference(task[2], task[1])))
+                                references=ref))
 
                 itemengine = self.integrator[n]['core'].WDItemEngine(
                                 wd_item_id=task[0],
@@ -74,7 +74,9 @@ class EditQueue:
             self.editqueue.task_done()
 
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
-        self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, cites))
+        while self.editqueue.qsize() > 25000:
+            sleep(300)
+        self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, tuple(cites)))
 
     def done(self):
         self.event.set()

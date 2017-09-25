@@ -17,20 +17,16 @@ class CitationGrapher:
             edit_summary='Updating citation graph')
 
     def get_entitydata(self, manifest):
-        packages = [manifest[x:x+50] for x in range(0, len(manifest), 50)]
+        url = 'https://www.wikidata.org/w/api.php?format=json&action=wbgetentities&ids='
+        for wikidata_id in manifest.keys():
+            url += wikidata_id + '|'
+        url = url[:-1]  # remove trailing pipe
 
-        for package in packages:
-            mapping = {x[0]: x for x in package}
-            url = 'https://www.wikidata.org/w/api.php?format=json&action=wbgetentities&ids='
-            for wikidata_id in mapping.keys():
-                url += wikidata_id + '|'
-            url = url[:-1]  # remove trailing pipe
+        r = requests.get(url).json()['entities']
 
-            r = requests.get(url).json()["entities"]
-
-            for wikidata_id, blob in r.items():
-                # (wikidata_item, pmcid, cites, retrieve_date)
-                yield wikidata_id, blob, mapping[wikidata_id][1], mapping[wikidata_id][2], mapping[wikidata_id][3]
+        for wikidata_id, blob in r.items():
+            # (pmcid, cites, retrieve_date)
+            yield wikidata_id, blob, manifest[wikidata_id][0], manifest[wikidata_id][1], manifest[wikidata_id][2]
 
     def process_manifest(self, manifest):
         # Screen against current values on Wikidata

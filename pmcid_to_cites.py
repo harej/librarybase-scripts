@@ -6,21 +6,20 @@ import requests
 import threading
 import time
 from BiblioWikidata import JournalArticles
-from collections import Counter, OrderedDict
+from collections import Counter
 from datetime import timedelta
 from mem_top import mem_top
 
 print('Setting up globals')  # debug
 
-WRITE_THREAD_COUNT = 2
-READ_THREAD_COUNT = 2
+WRITE_THREAD_COUNT = 3
+READ_THREAD_COUNT = 1
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
 CG = citation_grapher.CitationGrapher(
     'Q229883',
     'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
     write_thread_count=WRITE_THREAD_COUNT)
-
 
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
@@ -42,19 +41,14 @@ with open('/tmp/pmcid2wikidata.tsv') as f:
         item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
         pmcid = line[1].strip()
         pmcid_list.append(item + '|' + pmcid)
+        REDIS.hset('pmcid_to_wikidata', pmcid, item)
 
 pmcid_list = list(set(pmcid_list))  # Removing duplicates
+
+# Keeping only the PMCIDs while sorting in order of the Wikidata IDs
 pmcid_list.sort(reverse=True)
-
-pmcid_to_wikidata = OrderedDict()
-
-for thing in pmcid_list:
-    pair = thing.split('|')
-    item = pair[0]
-    pmcid = pair[1]
-    pmcid_to_wikidata[pmcid] = item
-
-del pmcid_list
+pmcid_list = [int(x.split('|')[1]) for x in pmcid_list if x != '?item|?pmcid']
+pmcid_list = tuple(pmcid_list)
 
 pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
 
@@ -64,32 +58,31 @@ with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
         f.write(chunk)
 
 package = {}
-cntr = 0
 with open('/tmp/pmid2wikidata.tsv') as f:
     for linenum, line in enumerate(f):
         line = line.replace('\0', '').split('\t')
         if len(line) < 2:
             continue
-        pmid = line[1].strip()
+        if str(line[1].strip()) == '?pmid':
+            continue
+        try:
+            pmid = int(line[1].strip())
+        except ValueError:
+            continue
         item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
         package[pmid] = item
         if linenum > 0 and linenum % 50 == 0:
-            print('Saving PMID package ' + str(cntr))
-            cntr += 1
             REDIS.hmset(
                 'pmid_to_wikidata',
                  package)
             package = {}
 
     # Save the last package
-    print('Saving PMID package ' + str(cntr))
-    cntr += 1
     REDIS.hmset(
         'pmid_to_wikidata',
          package)
 
 del package
-del cntr
 
 nonexistent_pmid = Counter()
 
@@ -98,11 +91,10 @@ print('Done setting up globals')  # debug
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
-        cited_id = str(cited_id)
         cited_item = REDIS.hget('pmid_to_wikidata', cited_id)
         if cited_item is None:
-            #print('The cited id "' + cited_id + '" is not on Wikidata')
-            nonexistent_pmid[cited_id] += 1
+            # Disabled for performance
+            #nonexistent_pmid[cited_id] += 1
             continue
         else:
             cited_item = cited_item.decode('utf-8')
@@ -110,7 +102,7 @@ def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
             continue
         cites.append(cited_item)
 
-    return (wikidata_item, pmcid, cites, retrieve_date)
+    return (pmcid, tuple(cites), retrieve_date)
 
 class UpdateGraphFast(threading.Thread):  # gotta go fast!
     def __init__(self, threadID, name, package):
@@ -137,7 +129,7 @@ class UpdateGraph(threading.Thread):
             'tool': 'wikidata_worker',
             'email': 'jamesmhare@gmail.com',
             'retmode': 'json',
-            'id': [x[1] for x in self.package]}
+            'id': list(self.package.values())}
 
         post_status = False
 
@@ -167,25 +159,26 @@ class UpdateGraph(threading.Thread):
             return
 
         # Construct dataset
-        manifest = []  # list of tuples
+        manifest = {}  # dict {item: tuple}
         for result in blob["linksets"]:
-            if str(result["ids"][0]) not in pmcid_to_wikidata:
+            relevant_pmcid = result["ids"][0]
+            relevant_item = REDIS.hget('pmcid_to_wikidata', relevant_pmcid)
+            if relevant_item is None:
                 continue
-            relevant_pmcid = str(result["ids"][0])
+            relevant_item = relevant_item.decode('utf-8')
             REDIS.setex(
-                'pmcid_to_cites__' + relevant_pmcid + '_retrieve_date',
+                'pmccite_ret:' + str(relevant_pmcid),
                 retrieve_date,
                 timedelta(days=14))
             if 'linksetdbs' not in result:
                 REDIS.setex(
-                    'pmcid_to_cites__' + relevant_pmcid,
+                    'pmccite:' + str(relevant_pmcid),
                     [],
                     timedelta(days=14))
                 continue
-            relevant_item = pmcid_to_wikidata[relevant_pmcid]
 
             REDIS.setex(
-                'pmcid_to_cites__' + relevant_pmcid,
+                'pmccite:' + str(relevant_pmcid),
                 result["linksetdbs"][0]["links"],
                 timedelta(days=14))
             add_to_manifest = create_manifest_entry(
@@ -193,57 +186,61 @@ class UpdateGraph(threading.Thread):
                 relevant_pmcid,
                 result["linksetdbs"][0]["links"],
                 retrieve_date)
-            manifest.append(add_to_manifest)
+            manifest[relevant_item] = add_to_manifest
 
         if len(manifest) > 0:
             CG.process_manifest(manifest)
-            print('Processed ' + manifest[0][0] + ' through ' + manifest[len(manifest) - 1][0])
+            print('Processed ' + str(len(manifest)) + ' entries')
 
 def main():
     # First, work off of the Redis cache.
     # Lookups that have been cached go to the "fast track"
     # Otherwise, send to the "slow track"
 
-    slowtrack = []
-    fasttrack = []
+    slowtrack = {}
+    fasttrack = {}
     thread_counter = 0
 
-    for pmcid, item in pmcid_to_wikidata.items():
+    for pmcid in pmcid_list:
 
-        lookup = REDIS.get('pmcid_to_cites__' + pmcid)
-        lookup_retrieve_date = REDIS.get('pmcid_to_cites__' + pmcid + '_retrieve_date')
+        item = REDIS.hget('pmcid_to_wikidata', pmcid)
+        if item is None:
+            continue
+
+        lookup = REDIS.get('pmccite:' + str(pmcid))
+        lookup_retrieve_date = REDIS.get('pmccite_ret:' + str(pmcid))
 
         if lookup is None or lookup_retrieve_date is None:
-            slowtrack.append((item, pmcid))
-            if len(slowtrack) >= 250:
+            slowtrack[item] = pmcid
+            if len(slowtrack) >= 50:
                 thread = UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack)
                 thread_counter += 1
                 while threading.active_count() >= THREAD_LIMIT:
                     time.sleep(1)
                 thread.start()
                 time.sleep(1)
-                slowtrack = []
+                slowtrack = {}
                 if thread_counter > 0 and thread_counter % 50 == 0:
                     print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
-                    #print('As of thread ' + str(thread_counter) + ':\n')
-                    #print(mem_top())  # debug
+                    print('As of thread ' + str(thread_counter) + ':\n')
+                    print(mem_top())  # debug
 
         else:
             bundle = ast.literal_eval(lookup.decode('UTF-8'))
-            bundle = [str(x) for x in bundle]
+            bundle = [int(x) for x in bundle]
             retrieve_date = lookup_retrieve_date.decode('UTF-8')
-            fasttrack.append(create_manifest_entry(item, pmcid, bundle, retrieve_date))
+            fasttrack[item.decode('utf-8')] = create_manifest_entry(item.decode('utf-8'), pmcid, bundle, retrieve_date)
             if len(fasttrack) >= 50:
                 thread = UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack)
                 thread_counter += 1
                 while threading.active_count() >= THREAD_LIMIT:
                     time.sleep(1)
                 thread.start()
-                fasttrack = []
+                fasttrack = {}
                 if thread_counter > 0 and thread_counter % 50 == 0:
                     print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
-                    #print('As of thread ' + str(thread_counter) + ':\n')
-                    #print(mem_top())  # debug
+                    print('As of thread ' + str(thread_counter) + ':\n')
+                    print(mem_top())  # debug
 
     if len(fasttrack) > 0:
         for package in [fasttrack[x:x+50] for x in range(0, len(fasttrack), 50)]:
@@ -255,12 +252,12 @@ def main():
             time.sleep(1)
             if thread_counter > 0 and thread_counter % 50 == 0:
                 print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
-                #print('As of thread ' + str(thread_counter) + ':\n')
-                #print(mem_top())  # debug
+                print('As of thread ' + str(thread_counter) + ':\n')
+                print(mem_top())  # debug
 
         print('\nProcessed ' + str(len(fasttrack)) + ' cached entries')
 
-    packages = [slowtrack[x:x+250] for x in range(0, len(slowtrack), 250)]
+    packages = [slowtrack[x:x+50] for x in range(0, len(slowtrack), 50)]
 
     threads = []
     for package in packages:
@@ -278,9 +275,9 @@ def main():
 
     print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
 
-    for identifier, counter in nonexistent_pmid.items():
-        if counter >= 500:
-            JournalArticles.item_creator([{'pmid': identifier}])
+    #for identifier, counter in nonexistent_pmid.items():
+    #    if counter >= 500:
+    #        JournalArticles.item_creator([{'pmid': identifier}])
 
 if __name__ == '__main__':
     main()
