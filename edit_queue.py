@@ -74,7 +74,7 @@ class EditQueue:
             self.editqueue.task_done()
 
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
-        while self.editqueue.qsize() > 25000:
+        while self.editqueue.qsize() > 1000:
             sleep(300)
         self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, tuple(cites)))
 
