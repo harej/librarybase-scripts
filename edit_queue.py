@@ -62,7 +62,7 @@ class EditQueue:
                                 references=ref))
 
                 itemengine = self.integrator[n]['core'].WDItemEngine(
-                                wd_item_id=task[0],
+                                wd_item_id='Q' + str(task[0]),
                                 data=data,
                                 append_value=self.append_value,
                                 good_refs=self.good_refs,
@@ -76,6 +76,7 @@ class EditQueue:
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
         while self.editqueue.qsize() > 1000:
             sleep(300)
+				relevant_item = int(relevant_item.replace('Q', ''))
         self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, tuple(cites)))
 
     def done(self):
