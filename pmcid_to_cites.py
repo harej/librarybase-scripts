@@ -1,4 +1,3 @@
-import citation_grapher
 import ast
 import arrow
 import redis
@@ -9,6 +8,8 @@ from BiblioWikidata import JournalArticles
 from collections import Counter
 from datetime import timedelta
 from mem_top import mem_top
+from edit_queue import EditQueue
+from citation_grapher import CitationGrapher
 
 print('Setting up globals')  # debug
 
@@ -16,10 +17,13 @@ WRITE_THREAD_COUNT = 3
 READ_THREAD_COUNT = 1
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
-CG = citation_grapher.CitationGrapher(
-    'Q229883',
-    'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
-    write_thread_count=WRITE_THREAD_COUNT)
+eq = EditQueue(
+         source=self.source,
+         url_pattern=self.url_pattern,
+         write_thread_count=self.write_thread_count,
+         append_value=['P2860'],
+         good_refs=[{'P248': None, 'P813': None, 'P854': None}],
+         edit_summary='Updating citation graph')
 
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
@@ -112,6 +116,11 @@ class UpdateGraphFast(threading.Thread):  # gotta go fast!
         self.package = package
 
     def run(self):
+		    CG = CitationGrapher(
+                 'Q229883',
+                 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
+		             eq,
+                 write_thread_count=WRITE_THREAD_COUNT)
         CG.process_manifest(self.package)
         print('. ', end='')
 
@@ -189,6 +198,11 @@ class UpdateGraph(threading.Thread):
             manifest[relevant_item] = add_to_manifest
 
         if len(manifest) > 0:
+            CG = CitationGrapher(
+                     'Q229883',
+                     'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
+	                   eq,
+                     write_thread_count=WRITE_THREAD_COUNT)
             CG.process_manifest(manifest)
             print('Processed ' + str(len(manifest)) + ' entries')
 

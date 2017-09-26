@@ -3,18 +3,11 @@ from edit_queue import EditQueue
 from site_credentials import *
 
 class CitationGrapher:
-    def __init__(self, source, url_pattern, write_thread_count=2):
+    def __init__(self, source, url_pattern, eq, write_thread_count=2):
         self.source = source
         self.url_pattern = url_pattern
         self.write_thread_count= write_thread_count
-
-        self.eq = EditQueue(
-            source=self.source,
-            url_pattern=self.url_pattern,
-            write_thread_count=self.write_thread_count,
-            append_value=['P2860'],
-            good_refs=[{'P248': None, 'P813': None, 'P854': None}],
-            edit_summary='Updating citation graph')
+        self.eq = eq
 
     def get_entitydata(self, manifest):
         url = 'https://www.wikidata.org/w/api.php?format=json&action=wbgetentities&ids='
