@@ -3,10 +3,7 @@ from edit_queue import EditQueue
 from site_credentials import *
 
 class CitationGrapher:
-    def __init__(self, source, url_pattern, eq, write_thread_count=2):
-        self.source = source
-        self.url_pattern = url_pattern
-        self.write_thread_count= write_thread_count
+    def __init__(self, eq):
         self.eq = eq
 
     def get_entitydata(self, manifest):
