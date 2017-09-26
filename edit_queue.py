@@ -76,7 +76,7 @@ class EditQueue:
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
         while self.editqueue.qsize() > 1000:
             sleep(300)
-				relevant_item = int(relevant_item.replace('Q', ''))
+        relevant_item = int(relevant_item.replace('Q', ''))
         self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, tuple(cites)))
 
     def done(self):
