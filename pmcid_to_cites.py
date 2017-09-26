@@ -116,10 +116,10 @@ class UpdateGraphFast(threading.Thread):  # gotta go fast!
         self.package = package
 
     def run(self):
-		    CG = CitationGrapher(
+        CG = CitationGrapher(
                  'Q229883',
                  'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi?dbfrom=pmc&linkname=pmc_refs_pubmed&retmode=json&id=',
-		             eq,
+                 eq,
                  write_thread_count=WRITE_THREAD_COUNT)
         CG.process_manifest(self.package)
         print('. ', end='')
