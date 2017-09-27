@@ -48,7 +48,7 @@ class EditQueue:
         data = []
         for cited_item in task[3]:
             data.append(wdi_core.WDItemID(
-                            value=cited_item,
+                            value='Q' + str(cited_item),
                             prop_nr='P2860',
                             references=ref))
 
@@ -79,8 +79,10 @@ class EditQueue:
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
         while self.editqueue.qsize() > 1000:
             sleep(300)
+        # Shedding some weight to take up less space in RAM.
         relevant_item = int(relevant_item.replace('Q', ''))
-        self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, tuple(cites)))
+        cites = tuple([int(x.replace('Q', '')) for x in cites])
+        self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, cites))
 
     def done(self):
         self.event.set()

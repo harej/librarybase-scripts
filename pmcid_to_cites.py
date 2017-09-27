@@ -11,7 +11,7 @@ from mem_top import mem_top
 from edit_queue import EditQueue
 from citation_grapher import CitationGrapher
 
-print('Setting up globals')  # debug
+print('Setting up globals')
 
 WRITE_THREAD_COUNT = 3
 READ_THREAD_COUNT = 1
@@ -28,69 +28,90 @@ eq = EditQueue(
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
-pmcid_seed = "https://query.wikidata.org/sparql?query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D"
-
-pmcid_list = []  # list of strings: "wikidata item|pmcid"
-
-r = requests.get(pmcid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
-with open('/tmp/pmcid2wikidata.tsv', 'wb') as f:
-    for chunk in r.iter_content(chunk_size=1024):
-        f.write(chunk)
-
-with open('/tmp/pmcid2wikidata.tsv') as f:
-    for line in f:
-        line = line.replace('\0', '').split('\t')
-        if len(line) < 2:
-            continue
-        item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
-        pmcid = line[1].strip()
-        pmcid_list.append(item + '|' + pmcid)
-        REDIS.hset('pmcid_to_wikidata', pmcid, item)
-
-pmcid_list = list(set(pmcid_list))  # Removing duplicates
-
-# Keeping only the PMCIDs while sorting in order of the Wikidata IDs
-pmcid_list.sort(reverse=True)
-pmcid_list = [int(x.split('|')[1].replace('\u200f', '')) for x in pmcid_list if x != '?item|?pmcid']
-pmcid_list = tuple(pmcid_list)
-
-pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
-
-r = requests.get(pmid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
-with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
-    for chunk in r.iter_content(chunk_size=1024):
-        f.write(chunk)
-
-package = {}
-with open('/tmp/pmid2wikidata.tsv') as f:
-    for linenum, line in enumerate(f):
-        line = line.replace('\0', '').split('\t')
-        if len(line) < 2:
-            continue
-        if str(line[1].strip()) == '?pmid':
-            continue
-        try:
-            pmid = int(line[1].strip())
-        except ValueError:
-            continue
-        item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
-        package[pmid] = item
-        if linenum > 0 and linenum % 50 == 0:
-            REDIS.hmset(
-                'pmid_to_wikidata',
-                 package)
-            package = {}
-
-    # Save the last package
-    REDIS.hmset(
-        'pmid_to_wikidata',
-         package)
-
-del package
 
 nonexistent_pmid = Counter()
 
-print('Done setting up globals')  # debug
+print('Done setting up globals')
+
+def get_pmcid_list():
+    print('Setting up PMCID list')
+
+    pmcid_seed = 'https://query.wikidata.org/sparql?query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D'
+
+    pmcid_list = []  # list of strings: "wikidata item|pmcid"
+
+    r = requests.get(pmcid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
+    with open('/tmp/pmcid2wikidata.tsv', 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024):
+            f.write(chunk)
+
+    with open('/tmp/pmcid2wikidata.tsv') as f:
+        for line in f:
+            line = line.replace('\0', '').split('\t')
+            if len(line) < 2:
+                continue
+            item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
+            pmcid = line[1].strip()
+            pmcid_list.append(item + '|' + pmcid)
+            REDIS.hset('pmcid_to_wikidata', pmcid, item)
+
+    # Removing duplicates
+    pmcid_list = list(set(pmcid_list))
+
+    # Keeping only the PMCIDs while sorting in order of the Wikidata IDs
+    pmcid_list.sort(reverse=False)
+    pmcid_list = [x.split('|')[1].replace('\u200f', '') for x in pmcid_list if x != '?item|?pmcid']
+
+    # Saving list
+    REDIS.delete('pmcid_list')
+    for entry in pmcid_list:
+        REDIS.rpush('pmcid_list', entry)
+
+    del pmcid_list
+
+    print('Done setting up PMCID list')
+
+    # And now getting each entry one at a time until we're out
+    while REDIS.llen('pmcid_list') > 0:
+        yield int(REDIS.lpop('pmcid_list'))
+
+def get_pmid_list():
+    print('Setting up PMID list')
+
+    pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
+
+    r = requests.get(pmid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
+    with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024):
+            f.write(chunk)
+
+    package = {}
+    with open('/tmp/pmid2wikidata.tsv') as f:
+        for linenum, line in enumerate(f):
+            line = line.replace('\0', '').split('\t')
+            if len(line) < 2:
+                continue
+            if str(line[1].strip()) == '?pmid':
+                continue
+            try:
+                pmid = int(line[1].strip())
+            except ValueError:
+                continue
+            item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
+            package[pmid] = item
+            if linenum > 0 and linenum % 50 == 0:
+                REDIS.hmset(
+                    'pmid_to_wikidata',
+                     package)
+                package = {}
+
+        # Save the last package
+        if len(package) > 0:
+            REDIS.hmset(
+                'pmid_to_wikidata',
+                 package)
+
+    print('Done setting up PMID list')
 
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
@@ -203,11 +224,13 @@ def main():
     # Lookups that have been cached go to the "fast track"
     # Otherwise, send to the "slow track"
 
+    get_pmid_list()
+
     slowtrack = {}
     fasttrack = {}
     thread_counter = 0
 
-    for pmcid in pmcid_list:
+    for pmcid in get_pmcid_list():
 
         item = REDIS.hget('pmcid_to_wikidata', pmcid)
         if item is None:
