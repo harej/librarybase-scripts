@@ -31,6 +31,35 @@ class EditQueue:
         for editor in self.editors:
             editor.start()
 
+    def task_processor(self, task, n):
+        ref = [[wdi_core.WDItemID(
+                    value=self.source,
+                    prop_nr='P248',
+                    is_reference=True),
+                wdi_core.WDUrl(
+                     value=self.url_pattern + urllib.parse.quote_plus(str(task[1])),
+                     prop_nr='P854',
+                     is_reference=True),
+                wdi_core.WDTime(
+                     task[2],
+                     prop_nr='P813',
+                     is_reference=True)]]
+
+        data = []
+        for cited_item in task[3]:
+            data.append(wdi_core.WDItemID(
+                            value=cited_item,
+                            prop_nr='P2860',
+                            references=ref))
+
+        itemengine = self.integrator[n]['core'].WDItemEngine(
+                        wd_item_id='Q' + str(task[0]),
+                        data=data,
+                        append_value=self.append_value,
+                        good_refs=self.good_refs,
+                        keep_good_ref_statements=True)
+        print(itemengine.write(self.integrator[n]['login'], edit_summary=self.edit_summary))
+
     def do_edits(self, n, event):
         while True:
             try:
@@ -41,33 +70,7 @@ class EditQueue:
                 else:
                     continue
             try:
-                ref = [[wdi_core.WDItemID(
-                            value=self.source,
-                            prop_nr='P248',
-                            is_reference=True),
-                        wdi_core.WDUrl(
-                             value=self.url_pattern + urllib.parse.quote_plus(str(task[1])),
-                             prop_nr='P854',
-                             is_reference=True),
-                        wdi_core.WDTime(
-                             task[2],
-                             prop_nr='P813',
-                             is_reference=True)]]
-
-                data = []
-                for cited_item in task[3]:
-                    data.append(wdi_core.WDItemID(
-                                value=cited_item,
-                                prop_nr='P2860',
-                                references=ref))
-
-                itemengine = self.integrator[n]['core'].WDItemEngine(
-                                wd_item_id='Q' + str(task[0]),
-                                data=data,
-                                append_value=self.append_value,
-                                good_refs=self.good_refs,
-                                keep_good_ref_statements=True)
-                print(itemengine.write(self.integrator[n]['login'], edit_summary=self.edit_summary))
+                self.task_processor(task, n)
             except Exception as e:
                 print('Exception when trying to edit ' + str(task[0]) + '; skipping')
                 print(e)
