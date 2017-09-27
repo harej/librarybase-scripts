@@ -51,7 +51,7 @@ pmcid_list = list(set(pmcid_list))  # Removing duplicates
 
 # Keeping only the PMCIDs while sorting in order of the Wikidata IDs
 pmcid_list.sort(reverse=True)
-pmcid_list = [int(x.split('|')[1]) for x in pmcid_list if x != '?item|?pmcid']
+pmcid_list = [int(x.split('|')[1].replace('\u200f', '')) for x in pmcid_list if x != '?item|?pmcid']
 pmcid_list = tuple(pmcid_list)
 
 pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
@@ -227,7 +227,7 @@ def main():
                 time.sleep(1)
                 slowtrack = {}
                 if thread_counter > 0 and thread_counter % 50 == 0:
-                    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                    print("Number of remaining edits: " + str(eq.editqueue.qsize()))
                     print('As of thread ' + str(thread_counter) + ':\n')
                     print(mem_top())  # debug
 
@@ -244,7 +244,7 @@ def main():
                 thread.start()
                 fasttrack = {}
                 if thread_counter > 0 and thread_counter % 50 == 0:
-                    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                    print("Number of remaining edits: " + str(eq.editqueue.qsize()))
                     print('As of thread ' + str(thread_counter) + ':\n')
                     print(mem_top())  # debug
 
@@ -257,7 +257,7 @@ def main():
             thread.start()
             time.sleep(1)
             if thread_counter > 0 and thread_counter % 50 == 0:
-                print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+                print("Number of remaining edits: " + str(eq.editqueue.qsize()))
                 print('As of thread ' + str(thread_counter) + ':\n')
                 print(mem_top())  # debug
 
@@ -277,9 +277,9 @@ def main():
     for thread in threads:
         thread.join()
 
-    CG.eq.done()  # Tell the editor threads they can stop now
+    eq.done()  # Tell the editor threads they can stop now
 
-    print("Number of remaining edits: " + str(CG.eq.editqueue.qsize()))
+    print("Number of remaining edits: " + str(eq.editqueue.qsize()))
 
     #for identifier, counter in nonexistent_pmid.items():
     #    if counter >= 500:
