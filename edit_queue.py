@@ -69,7 +69,7 @@ class EditQueue:
                                 keep_good_ref_statements=True)
                 print(itemengine.write(self.integrator[n]['login'], edit_summary=self.edit_summary))
             except Exception as e:
-                print('Exception when trying to edit ' + task[0] + '; skipping')
+                print('Exception when trying to edit ' + str(task[0]) + '; skipping')
                 print(e)
             self.editqueue.task_done()
 
