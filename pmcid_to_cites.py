@@ -14,7 +14,7 @@ from citation_grapher import CitationGrapher
 print('Setting up globals')
 
 WRITE_THREAD_COUNT = 3
-READ_THREAD_COUNT = 1
+READ_THREAD_COUNT = 4
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
 eq = EditQueue(
@@ -59,7 +59,7 @@ def get_pmcid_list():
     pmcid_list = list(set(pmcid_list))
 
     # Keeping only the PMCIDs while sorting in order of the Wikidata IDs
-    pmcid_list.sort(reverse=False)
+    pmcid_list.sort(reverse=True)
     pmcid_list = [x.split('|')[1].replace('\u200f', '') for x in pmcid_list if x != '?item|?pmcid']
 
     # Saving list
