@@ -7,7 +7,6 @@ import time
 from BiblioWikidata import JournalArticles
 from collections import Counter
 from datetime import timedelta
-from mem_top import mem_top
 from edit_queue import EditQueue
 from citation_grapher import CitationGrapher
 
@@ -30,6 +29,8 @@ REDIS = redis.Redis(host='127.0.0.1', port=6379)
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 
 nonexistent_pmid = Counter()
+
+thread_counter = 0
 
 print('Done setting up globals')
 
@@ -219,6 +220,16 @@ class UpdateGraph(threading.Thread):
             CG.process_manifest(manifest)
             print('Processed ' + str(len(manifest)) + ' entries')
 
+def start_thread(thread):
+    global thread_counter
+    while threading.active_count() >= THREAD_LIMIT:
+        time.sleep(1)
+    thread.start()
+    thread_counter += 1
+    if thread_counter > 0 and thread_counter % 50 == 0:
+        print("Number of remaining edits: " + str(eq.editqueue.qsize()))
+    time.sleep(1)
+
 def main():
     # First, work off of the Redis cache.
     # Lookups that have been cached go to the "fast track"
@@ -228,10 +239,9 @@ def main():
 
     slowtrack = {}
     fasttrack = {}
-    thread_counter = 0
 
+    # Iterating through PMCIDs and assigning to fast track or slow track
     for pmcid in get_pmcid_list():
-
         item = REDIS.hget('pmcid_to_wikidata', pmcid)
         if item is None:
             continue
@@ -242,17 +252,8 @@ def main():
         if lookup is None or lookup_retrieve_date is None:
             slowtrack[item] = pmcid
             if len(slowtrack) >= 50:
-                thread = UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack)
-                thread_counter += 1
-                while threading.active_count() >= THREAD_LIMIT:
-                    time.sleep(1)
-                thread.start()
-                time.sleep(1)
+                start_thread(UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack))
                 slowtrack = {}
-                if thread_counter > 0 and thread_counter % 50 == 0:
-                    print("Number of remaining edits: " + str(eq.editqueue.qsize()))
-                    print('As of thread ' + str(thread_counter) + ':\n')
-                    print(mem_top())  # debug
 
         else:
             bundle = ast.literal_eval(lookup.decode('UTF-8'))
@@ -260,45 +261,15 @@ def main():
             retrieve_date = lookup_retrieve_date.decode('UTF-8')
             fasttrack[item.decode('utf-8')] = create_manifest_entry(item.decode('utf-8'), pmcid, bundle, retrieve_date)
             if len(fasttrack) >= 50:
-                thread = UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack)
-                thread_counter += 1
-                while threading.active_count() >= THREAD_LIMIT:
-                    time.sleep(1)
-                thread.start()
+                start_thread(UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack))
                 fasttrack = {}
-                if thread_counter > 0 and thread_counter % 50 == 0:
-                    print("Number of remaining edits: " + str(eq.editqueue.qsize()))
-                    print('As of thread ' + str(thread_counter) + ':\n')
-                    print(mem_top())  # debug
 
+    # If there are leftovers
     if len(fasttrack) > 0:
-        for package in [fasttrack[x:x+50] for x in range(0, len(fasttrack), 50)]:
-            thread = UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), package)
-            thread_counter += 1
-            while threading.active_count() >= THREAD_LIMIT:
-                time.sleep(1)
-            thread.start()
-            time.sleep(1)
-            if thread_counter > 0 and thread_counter % 50 == 0:
-                print("Number of remaining edits: " + str(eq.editqueue.qsize()))
-                print('As of thread ' + str(thread_counter) + ':\n')
-                print(mem_top())  # debug
+        start_thread(UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack))
 
-        print('\nProcessed ' + str(len(fasttrack)) + ' cached entries')
-
-    packages = [slowtrack[x:x+50] for x in range(0, len(slowtrack), 50)]
-
-    threads = []
-    for package in packages:
-        threads.append(UpdateGraph(thread_counter, "thread-" + str(thread_counter), package))
-        thread_counter += 1
-    for thread in threads:
-        while threading.active_count() >= THREAD_LIMIT:
-            time.sleep(1)
-        thread.start()
-        time.sleep(1)
-    for thread in threads:
-        thread.join()
+    if len(slowtrack) > 0:
+        start_thread(UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack))
 
     eq.done()  # Tell the editor threads they can stop now
 
