@@ -5,6 +5,7 @@ import threading
 import urllib.parse
 from time import sleep
 from wikidataintegrator import wdi_core
+from wikidataintegrator.wdi_config import config
 from site_credentials import *
 
 class EditQueue:
@@ -71,6 +72,7 @@ class EditQueue:
                     continue
             try:
                 self.task_processor(task, n)
+                sleep(0.25)
             except Exception as e:
                 print('Exception when trying to edit ' + str(task[0]) + '; skipping')
                 print(e)
@@ -78,7 +80,7 @@ class EditQueue:
 
     def post(self, relevant_item, relevant_external_id, retrieve_date, cites):
         while self.editqueue.qsize() > 1000:
-            sleep(300)
+            sleep(0.25)
         # Shedding some weight to take up less space in RAM.
         relevant_item = int(relevant_item.replace('Q', ''))
         cites = tuple([int(x.replace('Q', '')) for x in cites])

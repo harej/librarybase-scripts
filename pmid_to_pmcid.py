@@ -5,7 +5,7 @@ from datetime import timedelta
 REDIS = redis.Redis(host='127.0.0.1', port=6379)
 
 def main():
-    seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%20%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP932%20%3Fdummy1%20%7D%0A%20%20FILTER%28%21bound%28%3Fdummy1%29%29%0A%7D%0AORDER%20BY%20DESC%28%3Fitem%29"
+    seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%20%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP932%20%3Fdummy1%20%7D%0A%20%20FILTER%28%21bound%28%3Fdummy1%29%29%0A%7D"
     url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?format=json&tool=wikidata_worker&email=jamesmhare@gmail.com&ids="
 
     r = requests.get(seed)
