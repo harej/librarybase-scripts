@@ -9,10 +9,11 @@ from collections import Counter
 from datetime import timedelta
 from edit_queue import EditQueue
 from citation_grapher import CitationGrapher
+from site_credentials import *
 
 print('Setting up globals')
 
-WRITE_THREAD_COUNT = 3
+WRITE_THREAD_COUNT = 2
 READ_THREAD_COUNT = 5
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
@@ -27,7 +28,7 @@ eq = EditQueue(
          good_refs=[{'P248': None, 'P813': None, 'P854': None}],
          edit_summary='Updating citation graph')
 
-REDIS = redis.Redis(host='127.0.0.1', port=6379)
+REDIS = redis.Redis(host=redis_server, port=redis_port, password=redis_key)
 
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 
@@ -199,18 +200,18 @@ class UpdateGraph(threading.Thread):
             REDIS.setex(
                 'pmccite_ret:' + str(relevant_pmcid),
                 retrieve_date,
-                timedelta(days=14))
+                timedelta(days=28))
             if 'linksetdbs' not in result:
                 REDIS.setex(
                     'pmccite:' + str(relevant_pmcid),
                     [],
-                    timedelta(days=14))
+                    timedelta(days=28))
                 continue
 
             REDIS.setex(
                 'pmccite:' + str(relevant_pmcid),
                 result["linksetdbs"][0]["links"],
-                timedelta(days=14))
+                timedelta(days=28))
             add_to_manifest = create_manifest_entry(
                 relevant_item,
                 relevant_pmcid,
