@@ -31,22 +31,31 @@ def main():
     #   4. Two or more DOIs that are different even when normalized to uppercase:
     #      We normalize within that set. Still duplicate, but at least normalized.
 
-    url = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fi%20%3Fdoi%20where%20%7B%20%3Fi%20wdt%3AP356%20%3Fdoi%20%7D%20order%20by%20%3Fi"
-    seed = requests.get(url).json()["results"]["bindings"]
-
+    limit = 1000000
+    offset = 0
     manifest = {}  # dictionary of lists
 
-    for result in seed:
-        wikidata_item = result["i"]["value"].replace("http://www.wikidata.org/entity/", "")
-        doi = result["doi"]["value"]
+    while True:
+        print('Offset', str(offset))
+        url = "https://query.wikidata.org/sparql?format=json&query=select%20%3Fi%20%3Fdoi%20where%20%7B%20%3Fi%20wdt%3AP356%20%3Fdoi%20%7D%20limit%20{0}%20offset%20{1}".\
+              format(str(limit), str(offset))
+        seed = requests.get(url).json()["results"]["bindings"]
 
-        if wikidata_item not in manifest:
-            manifest[wikidata_item] = []
+        for result in seed:
+            wikidata_item = result["i"]["value"].replace("http://www.wikidata.org/entity/", "")
+            doi = result["doi"]["value"]
 
-        manifest[wikidata_item].append(doi)
+            if wikidata_item not in manifest:
+                manifest[wikidata_item] = []
+
+            manifest[wikidata_item].append(doi)
+
+        if len(seed) < limit:
+            break
+
+        offset += limit
 
     for wikidata_item, doi_list in manifest.items():
-
         if len(doi_list) > 1:
             # Testing to see if all DOIs are the same when converted to uppercase.
             # If not, then it's case 4 and must be skipped.
@@ -60,9 +69,9 @@ def main():
                 process(wikidata_item, variant_list)
 
         else:
-            if doi_list[0] != canonical:
+            if doi_list[0] != doi_list[0].upper():
                 lines_to_print.append("-" + wikidata_item + "|P356|\"" + doi_list[0] + "\"||")
-                lines_to_print.append(wikidata_item + "|P356|\"" + canonical + "\"||")
+                lines_to_print.append(wikidata_item + "|P356|\"" + doi_list[0].upper() + "\"||")
 
     packages = [lines_to_print[x:x+20000] for x in range(0, len(lines_to_print), 20000)]
 

@@ -9,12 +9,16 @@ from wikidataintegrator.wdi_config import config
 from site_credentials import *
 
 class EditQueue:
-    def __init__(self, source, url_pattern, write_thread_count=4, append_value=[], good_refs=[], edit_summary=''):
+    def __init__(self, source, url_pattern, write_thread_count=4, append_value=[], good_refs=[], edit_summary='', alt_account=False):
         self.source = source
         self.url_pattern = url_pattern
         self.append_value = append_value
         self.good_refs = good_refs
         self.edit_summary = edit_summary
+
+        if alt_account is True:
+            site_username = site_username_2
+            site_password = site_password_2
 
         self.integrator = []
         for n in range(0, write_thread_count):
