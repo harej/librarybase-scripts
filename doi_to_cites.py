@@ -26,9 +26,9 @@ eq = EditQueue(
 
 print('Done setting up globals')
 
-def update_graph(doi, cites)
+def update_graph(doi, cites):
     CG = CitationGrapher(eq)
-    CG.process_manifest([(doi, tuple(cites), '+2018-01-21T00:00:00Z')])
+    CG.process_manifest({codeswitch.doi_to_wikidata(doi): (doi, tuple(cites), '+2018-01-21T00:00:00Z')})
     print('. ', end='', flush=True)
 
 def main():
@@ -46,7 +46,7 @@ def main():
             cites = []
 
             for doi_y in mapping[doi_x]:
-                wd_y = codesiwtch.doi_to_wikidata(doi_y)
+                wd_y = codeswitch.doi_to_wikidata(doi_y)
                 if wd_y is None:
                     continue
                 if wd_x == wd_y:
