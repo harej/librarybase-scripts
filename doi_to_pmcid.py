@@ -12,28 +12,27 @@ def main():
     for identifier, wd_item in doi_to_wikidata.items():
         if codeswitch.wikidata_to_pmcid(wd_item) is None:
             doi.append(identifier)
-            if len(doi) >= 200:
-                package = doi
-                doi = []
-                query_string = ""
 
-                for item in package:
-                    query_string += item + ","
-                query_string = query_string[:-1]  # Remove trailing comma
+    packages = [doi[x:x+200] for x in range(0, len(doi), 200)]
+    for package in packages:
+        query_string = ""
+        for item in package:
+            query_string += item + ","
+        query_string = query_string[:-1]  # Remove trailing comma
 
-                s = requests.get(url + query_string)
-                try:
-                    blob = s.json()
-                except ValueError as e:
-                    print("Error!", str(e))
+        s = requests.get(url + query_string)
+        try:
+            blob = s.json()
+        except ValueError as e:
+            print("Error!", str(e))
 
-                if "records" in blob:
-                    for response in blob["records"]:
-                        responsedoi = response["doi"].upper()
-                        if "pmcid" in response:
-                            print(wd_item + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
-                            if "pmid" in response:
-                                print(wd_item + "\tP698\t\"" + response["pmid"] + "\"")
+        if "records" in blob:
+            for response in blob["records"]:
+                responsedoi = response["doi"].upper()
+                if "pmcid" in response:
+                    print(wd_item + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                    if "pmid" in response:
+                        print(wd_item + "\tP698\t\"" + response["pmid"] + "\"")
 
 if __name__ == '__main__':
     main()
