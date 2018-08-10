@@ -16,6 +16,9 @@ class EditQueue:
         self.good_refs = good_refs
         self.edit_summary = edit_summary
 
+        global site_username
+        global site_password
+
         if alt_account is True:
             site_username = site_username_2
             site_password = site_password_2
