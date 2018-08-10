@@ -1,5 +1,7 @@
 import requests
 import codeswitch
+from pprint import pprint
+import random
 
 def main():
     url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?format=json&tool=wikidata_worker&email=jamesmhare@gmail.com&ids="
@@ -14,6 +16,9 @@ def main():
     print('Done')
 
     blacklist = list(wikidata_to_pmcid.keys())
+
+    pprint(random.sample(doi_to_wikidata.items(), 5))
+    pprint(random.sample(blacklist, 5))
 
     doi = []
     print('Filtering out the ones we don\'t need to process...')
