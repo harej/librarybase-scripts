@@ -8,10 +8,14 @@ def main():
     doi_to_wikidata = codeswitch.hgetall('P356_to_wikidata')
     print('Done')
 
+    print('Getting all Wikidata items with P932 (so we can filter them out)...')
+    wikidata_to_pmcid = codeswitch.hgetall('wikidata_to_P932')
+    print('Done')
+
     doi = []
     print('Filtering out the ones we don\'t need to process...')
     for identifier, wd_item in doi_to_wikidata.items():
-        if codeswitch.wikidata_to_pmcid(wd_item) is None:
+        if wd_item not in wikidata_to_pmcid:
             doi.append(identifier)
     print('Done')
 
@@ -33,9 +37,9 @@ def main():
             for response in blob["records"]:
                 responsedoi = response["doi"].upper()
                 if "pmcid" in response:
-                    print(wd_item + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                    print(doi_to_wikidata[responsedoi] + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
                     if "pmid" in response:
-                        print(wd_item + "\tP698\t\"" + response["pmid"] + "\"")
+                        print(doi_to_wikidata[responsedoi] + "\tP698\t\"" + response["pmid"] + "\"")
 
 if __name__ == '__main__':
     main()
