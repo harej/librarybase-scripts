@@ -4,9 +4,13 @@ import codeswitch
 def main():
     url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?format=json&tool=wikidata_worker&email=jamesmhare@gmail.com&ids="
 
+    print('Getting all Wikidata items with P356...')
+    doi_to_wikidata = codeswitch.hgetall('P356_to_wikidata')
+    print('Done')
+
     doi = []
-    for identifier in codeswitch.identifier_generator('P356', 'doi_to_pmcid_list'):
-        if codeswitch.wikidata_to_pmcid(codeswitch.doi_to_wikidata(identifier)) is None:
+    for identifier in doi_to_wikidata.keys():
+        if codeswitch.wikidata_to_pmcid(doi_to_wikidata[identifier]) is None:
             doi.append(identifier)
             if len(doi) >= 200:
                 package = doi
@@ -20,8 +24,8 @@ def main():
                 s = requests.get(url + query_string)
                 try:
                     blob = s.json()
-                except ValueError:
-                    continue
+                except ValueError as e:
+                    print("Error!", str(e))
 
                 if "records" in blob:
                     for response in blob["records"]:

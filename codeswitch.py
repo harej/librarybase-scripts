@@ -19,6 +19,10 @@ def identifier_generator(wd_prop, list_name, descending_order=True):
     while REDIS.llen(list_name) > 0:
         yield REDIS.lpop(list_name)
 
+def hgetall(keyname):
+    raw = REDIS.hgetall(keyname)
+    return {x.decode('utf-8'): y.decode('utf-8') for x, y in raw.items()}
+
 def hget(keyname, itemname):
     raw = REDIS.hget(keyname, itemname)
 
