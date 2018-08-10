@@ -6,16 +6,19 @@ def main():
 
     print('Getting all Wikidata items with P356...')
     doi_to_wikidata = codeswitch.hgetall('P356_to_wikidata')
+    doi_to_wikidata = {x.upper(): y for x, y in doi_to_wikidata.items()}
     print('Done')
 
     print('Getting all Wikidata items with P932 (so we can filter them out)...')
     wikidata_to_pmcid = codeswitch.hgetall('wikidata_to_P932')
     print('Done')
 
+    blacklist = list(wikidata_to_pmcid.keys())
+
     doi = []
     print('Filtering out the ones we don\'t need to process...')
     for identifier, wd_item in doi_to_wikidata.items():
-        if wd_item not in wikidata_to_pmcid:
+        if wd_item not in blacklist:
             doi.append(identifier)
     print('Done')
 
