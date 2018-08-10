@@ -9,8 +9,8 @@ def main():
     print('Done')
 
     doi = []
-    for identifier in doi_to_wikidata.keys():
-        if codeswitch.wikidata_to_pmcid(doi_to_wikidata[identifier]) is None:
+    for identifier, wd_item in doi_to_wikidata.items():
+        if codeswitch.wikidata_to_pmcid(wd_item) is None:
             doi.append(identifier)
             if len(doi) >= 200:
                 package = doi
@@ -31,9 +31,9 @@ def main():
                     for response in blob["records"]:
                         responsedoi = response["doi"].upper()
                         if "pmcid" in response:
-                            print(codeswitch.doi_to_wikidata(responsedoi) + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                            print(wd_item + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
                             if "pmid" in response:
-                                print(codeswitch.doi_to_wikidata(responsedoi) + "\tP698\t\"" + response["pmid"] + "\"")
+                                print(wd_item + "\tP698\t\"" + response["pmid"] + "\"")
 
 if __name__ == '__main__':
     main()
