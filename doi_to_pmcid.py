@@ -9,11 +9,14 @@ def main():
     print('Done')
 
     doi = []
+    print('Filtering out the ones we don\'t need to process...')
     for identifier, wd_item in doi_to_wikidata.items():
         if codeswitch.wikidata_to_pmcid(wd_item) is None:
             doi.append(identifier)
+    print('Done')
 
     packages = [doi[x:x+200] for x in range(0, len(doi), 200)]
+
     for package in packages:
         query_string = ""
         for item in package:
