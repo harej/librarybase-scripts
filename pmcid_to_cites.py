@@ -1,11 +1,10 @@
 import ast
 import arrow
+import codeswitch
 import redis
 import requests
 import threading
 import time
-from BiblioWikidata import JournalArticles
-from collections import Counter
 from datetime import timedelta
 from edit_queue import EditQueue
 from citation_grapher import CitationGrapher
@@ -32,102 +31,16 @@ REDIS = redis.Redis(host=redis_server, port=redis_port, password=redis_key)
 
 pmc_template = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/elink.fcgi"
 
-nonexistent_pmid = Counter()
-
 thread_counter = 0
 
 print('Done setting up globals')
 
-def get_pmcid_list():
-    print('Setting up PMCID list')
-
-    pmcid_seed = 'https://query.wikidata.org/sparql?query=select%20%3Fitem%20%3Fpmcid%20where%20%7B%20%3Fitem%20wdt%3AP932%20%3Fpmcid%20%7D'
-
-    pmcid_list = []  # list of strings: "wikidata item|pmcid"
-
-    r = requests.get(pmcid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
-    with open('/tmp/pmcid2wikidata.tsv', 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024):
-            f.write(chunk)
-
-    with open('/tmp/pmcid2wikidata.tsv') as f:
-        for line in f:
-            line = line.replace('\0', '').split('\t')
-            if len(line) < 2:
-                continue
-            item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
-            pmcid = line[1].strip()
-            pmcid_list.append(item + '|' + pmcid)
-            REDIS.hset('pmcid_to_wikidata', pmcid, item)
-
-    # Removing duplicates
-    pmcid_list = list(set(pmcid_list))
-
-    # Keeping only the PMCIDs while sorting in order of the Wikidata IDs
-    pmcid_list.sort(reverse=DESCENDING_ORDER)
-    pmcid_list = [x.split('|')[1].replace('\u200f', '') for x in pmcid_list if x != '?item|?pmcid']
-
-    # Saving list
-    REDIS.delete('pmcid_list')
-    for entry in pmcid_list:
-        REDIS.rpush('pmcid_list', entry)
-
-    del pmcid_list
-
-    print('Done setting up PMCID list')
-
-    # And now getting each entry one at a time until we're out
-    while REDIS.llen('pmcid_list') > 0:
-        yield int(REDIS.lpop('pmcid_list'))
-
-def get_pmid_list():
-    print('Setting up PMID list')
-
-    pmid_seed = "https://query.wikidata.org/sparql?query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%7D"
-
-    r = requests.get(pmid_seed, stream=True, headers={'Accept': 'text/tab-separated-values'})
-    with open('/tmp/pmid2wikidata.tsv', 'wb') as f:
-        for chunk in r.iter_content(chunk_size=1024):
-            f.write(chunk)
-
-    package = {}
-    with open('/tmp/pmid2wikidata.tsv') as f:
-        for linenum, line in enumerate(f):
-            line = line.replace('\0', '').split('\t')
-            if len(line) < 2:
-                continue
-            if str(line[1].strip()) == '?pmid':
-                continue
-            try:
-                pmid = int(line[1].strip())
-            except ValueError:
-                continue
-            item = line[0].replace('<http://www.wikidata.org/entity/', '').replace('>', '').strip()
-            package[pmid] = item
-            if linenum > 0 and linenum % 50 == 0:
-                REDIS.hmset(
-                    'pmid_to_wikidata',
-                     package)
-                package = {}
-
-        # Save the last package
-        if len(package) > 0:
-            REDIS.hmset(
-                'pmid_to_wikidata',
-                 package)
-
-    print('Done setting up PMID list')
-
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
-        cited_item = REDIS.hget('pmid_to_wikidata', cited_id)
+        cited_item = codeswitch.pmid_to_wikidata(cited_id)
         if cited_item is None:
-            # Disabled for performance
-            #nonexistent_pmid[cited_id] += 1
             continue
-        else:
-            cited_item = cited_item.decode('utf-8')
         if wikidata_item == cited_item:
             continue
         cites.append(cited_item)
@@ -193,10 +106,9 @@ class UpdateGraph(threading.Thread):
         manifest = {}  # dict {item: tuple}
         for result in blob["linksets"]:
             relevant_pmcid = result["ids"][0]
-            relevant_item = REDIS.hget('pmcid_to_wikidata', relevant_pmcid)
+            relevant_item = codeswitch.pmcid_to_wikidata(relevant_pmcid)
             if relevant_item is None:
                 continue
-            relevant_item = relevant_item.decode('utf-8')
             REDIS.setex(
                 'pmccite_ret:' + str(relevant_pmcid),
                 retrieve_date,
@@ -239,17 +151,11 @@ def main():
     # Lookups that have been cached go to the "fast track"
     # Otherwise, send to the "slow track"
 
-    get_pmid_list()
-
     slowtrack = {}
     fasttrack = {}
 
     # Iterating through PMCIDs and assigning to fast track or slow track
-    for pmcid in get_pmcid_list():
-        item = REDIS.hget('pmcid_to_wikidata', pmcid)
-        if item is None:
-            continue
-
+    for pmcid, item in codeswitch.hgetall('P932_to_wikidata'):
         lookup = REDIS.get('pmccite:' + str(pmcid))
         lookup_retrieve_date = REDIS.get('pmccite_ret:' + str(pmcid))
 
@@ -278,10 +184,6 @@ def main():
     eq.done()  # Tell the editor threads they can stop now
 
     print("Number of remaining edits: " + str(eq.editqueue.qsize()))
-
-    #for identifier, counter in nonexistent_pmid.items():
-    #    if counter >= 500:
-    #        JournalArticles.item_creator([{'pmid': identifier}])
 
 if __name__ == '__main__':
     main()

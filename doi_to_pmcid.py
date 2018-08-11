@@ -5,21 +5,22 @@ def main():
     url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?format=json&tool=wikidata_worker&email=jamesmhare@gmail.com&ids="
 
     print('Getting all Wikidata items with P356...')
-    doi_to_wikidata = codeswitch.hgetall('P356_to_wikidata')
-    doi_to_wikidata = {x.upper(): y for x, y in doi_to_wikidata.items()}
+    wikidata_to_doi = codeswitch.hgetall('wikidata_to_P356')
+    wikidata_to_doi = {x: y.upper() for x, y in wikidata_to_doi.items()}
     print('Done')
 
     print('Getting all Wikidata items with P932 (so we can filter them out)...')
     wikidata_to_pmcid = codeswitch.hgetall('wikidata_to_P932')
     print('Done')
 
+    whitelist = list(wikidata_to_doi.keys())
     blacklist = list(wikidata_to_pmcid.keys())
 
-    doi = []
     print('Filtering out the ones we don\'t need to process...')
-    for identifier, wd_item in doi_to_wikidata.items():
-        if wd_item not in blacklist:
-            doi.append(identifier)
+    whitelist = list(set(whitelist) - set(blacklist))
+    doi = []
+    for wd_item in whitelist:
+        doi.append(wikidata_to_doi[wd_item])
     print('Done')
 
     packages = [doi[x:x+200] for x in range(0, len(doi), 200)]
@@ -40,9 +41,9 @@ def main():
             for response in blob["records"]:
                 responsedoi = response["doi"].upper()
                 if "pmcid" in response:
-                    print(doi_to_wikidata[responsedoi] + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                    print(codeswitch.doi_to_wikidata(responsedoi) + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
                     if "pmid" in response:
-                        print(doi_to_wikidata[responsedoi] + "\tP698\t\"" + response["pmid"] + "\"")
+                        print(codeswitch.doi_to_wikidata(responsedoi) + "\tP698\t\"" + response["pmid"] + "\"")
 
 if __name__ == '__main__':
     main()

@@ -1,137 +1,65 @@
 import arrow
-import math
+import re
 import redis
-import requests
-import threading
-import time
-from site_credentials import *
-
-manifest = ['P356', 'P698', 'P932']
-read_threads = 9
+from bz2 import BZ2File as bzopen
+from site_credentials import redis_server, redis_port, redis_key
 
 REDIS = redis.Redis(host=redis_server, port=redis_port, password=redis_key)
-THREAD_LIMIT = 2 + len(manifest) + read_threads
 today = arrow.utcnow().format('YYYYMMDD')
-limit = {}
 
-def process_blob(prop, blob):
-    if '@graph' not in blob:
-        return False
+def main():
+    # <http://www.wikidata.org/entity/Q47133351> <http://www.wikidata.org/prop/direct/P356> "10.1002/EJP.1050" .
+    REGEX = r'^<http:\/\/www\.wikidata\.org\/entity\/(Q\d+)> <http:\/\/www.wikidata.org\/prop\/direct\/(P\d+)> "(.*?)" \.$'
+    manifest = ['P356', 'P698', 'P932', 'P2880']
+    dump_location = '/public/dumps/public/wikidatawiki/entities/latest-truthy.nt.bz2'
+    to_add = {x: [] for x in manifest}
 
-    for entry in blob['@graph']:
-        if prop not in entry:
-            continue
+    with bzopen(dump_location, 'r') as f:
+        for line in f:
+            line = line.decode('utf-8')
+            match = re.match(REGEX, line)
+            if match is None:
+                continue
 
-        wd_item = entry['@id'].replace('wd:', '')
-        prop_value = entry[prop]
+            wd_item  = match.group(1)
+            wd_prop  = match.group(2)
+            wd_value = match.group(3)
 
-        REDIS.hset(
-            '{0}_to_wikidata_{1}'.format(prop, today),
-            prop_value,
-            wd_item)
-        REDIS.hset('wikidata_to_{0}_{1}'.format(prop, today),
-            wd_item,
-            prop_value)
+            if wd_prop in manifest:
+                print('Up to', wd_item, end='\r')
+                to_add[wd_prop].append((wd_item, wd_value))
 
-def get_blob(prop, counter):
-    url = ('https://query.wikidata.org/bigdata/ldf?subject=&predicate='
-           'http%3A%2F%2Fwww.wikidata.org%2Fprop%2Fdirect%2F{0}&object='
-           '&page={1}')
+                if len(to_add[wd_prop]) >= 10000:
+                    print('\nSaving to Redis')
 
-    print(prop, '-', str(counter))
+                    wikidata_to_x = {x[0]: x[1] for x in to_add[wd_prop]}
+                    x_to_wikidata = {x[1]: x[0] for x in to_add[wd_prop]}
 
-    while True:
-        r = requests.get(
-                url.format(prop, counter),
-                headers={"Accept": "application/ld+json"})
-        if 'Rate limit exceeded' in r.text:
-            time.sleep(10)
-        else:
-            break
+                    REDIS.hmset(
+                        '{0}_to_wikidata_{1}'.format(wd_prop, today),
+                        x_to_wikidata)
+                    REDIS.hmset('wikidata_to_{0}_{1}'.format(wd_prop, today),
+                        wikidata_to_x)
 
-    try:
-        return r.json()
-    except:
-        print(r.text)
+                    to_add[wd_prop] = []
 
-class GetAndProcessBlob(threading.Thread):
-    def __init__(self, threadID, name, prop, counter):
-        threading.Thread.__init__(self)
-        self.threadID = threadID
-        self.name = name
-        self.prop = prop
-        self.counter = counter
+    # If there are leftovers
+    for wd_prop, tuplelist in to_add.items():
+        wikidata_to_x = {x[0]: x[1] for x in tuplelist}
+        x_to_wikidata = {x[1]: x[0] for x in tuplelist}
 
-    def run(self):
-        prop = self.prop
-        counter = self.counter
+        REDIS.hmset(
+            '{0}_to_wikidata_{1}'.format(wd_prop, today),
+            x_to_wikidata)
+        REDIS.hmset('wikidata_to_{0}_{1}'.format(wd_prop, today),
+            wikidata_to_x)
 
-        if prop in limit:
-            if counter > limit[prop]:
-                return False
-
-        blob = get_blob(prop, counter)
-        process_blob(prop, blob)
-
-class CreateCache(threading.Thread):  # gotta go fast!
-    def __init__(self, threadID, name, prop):
-        threading.Thread.__init__(self)
-        self.threadID = threadID
-        self.name = name
-        self.prop = prop
-
-    def run(self):
-        global limit
-        prop = self.prop
-
-        blob = get_blob(prop, 1)
-        process_blob(prop, blob)
-
-        for entry in blob['@graph']:
-            if 'void:triples' in entry:
-                limit[prop] = int(math.ceil(entry['void:triples'] / 100))
-
-        # At this point, if `limit[prop]` is not defined, something is seriously
-        # wrong.
-
-        if prop not in limit:
-            raise Exception
-
-        counter = 2
-
-        # Time to iterate through the rest of the pages up to the limit
-        while True:
-            if counter > limit[prop]:
-                break
-
-            while threading.active_count() >= THREAD_LIMIT:
-                time.sleep(0.25)
-
-            thread = GetAndProcessBlob(
-                counter,
-                'thread-' + prop + '-' + str(counter),
-                prop,
-                counter)
-
-            thread.start()
-            counter += 1
-
-        REDIS.rename(
-            '{0}_to_wikidata_{1}'.format(prop, today),
-            '{0}_to_wikidata'.format(prop))
-        REDIS.rename(
-            'wikidata_to_{0}_{1}'.format(prop, today),
-            'wikidata_to_{0}'.format(prop))
-
-def main(manifest):
-    thread_counter = 0
-    for prop in manifest:
-        thread = CreateCache(
-            thread_counter,
-            'thread-' + str(thread_counter),
-            prop)
-        thread.start()
-        thread_counter += 1
+    # Finalize
+    for wd_prop in manifest:
+        REDIS.rename('{0}_to_wikidata_{1}'.format(wd_prop, today),
+            '{0}_to_wikidata'.format(wd_prop))
+        REDIS.rename('wikidata_to_{0}_{1}'.format(wd_prop, today),
+            'wikidata_to_{0}'.format(wd_prop))
 
 if __name__ == '__main__':
-    main(manifest)
+    main()
