@@ -1,23 +1,34 @@
+import codeswitch
 import redis
 import requests
 from datetime import timedelta
+from site_credentials import *
 
-REDIS = redis.Redis(host='127.0.0.1', port=6379)
+REDIS = redis.Redis(host=redis_server, port=redis_port, password=redis_key)
 
 def main():
-    seed = "https://query.wikidata.org/sparql?format=json&query=SELECT%20%3Fitem%20%3Fpmid%20WHERE%20%7B%0A%20%20%3Fitem%20wdt%3AP698%20%3Fpmid%20.%0A%20%20OPTIONAL%20%7B%20%3Fitem%20wdt%3AP932%20%3Fdummy1%20%7D%0A%20%20FILTER%28%21bound%28%3Fdummy1%29%29%0A%7D"
     url = "https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/?format=json&tool=wikidata_worker&email=jamesmhare@gmail.com&ids="
 
-    r = requests.get(seed)
-    blob = r.json()
+    print('Getting all Wikidata items with P698...')
+    wikidata_to_pmid = codeswitch.hgetall('wikidata_to_P698')
+    print('Done')
 
-    wikidata_items = {}  # key: pmid; value: wikidata item
+    print('Getting all Wikidata items with P932 (so we can filter them out)...')
+    wikidata_to_pmcid = codeswitch.hgetall('wikidata_to_P932')
+    print('Done')
+
+    whitelist = list(wikidata_to_pmid.keys())
+    blacklist = list(wikidata_to_pmcid.keys())
+
+    print('Filtering out the ones we don\'t need to process...')
+    whitelist = list(set(whitelist) - set(blacklist))
     pmid = []
-    for result in blob["results"]["bindings"]:
-        wikidata_items[result["pmid"]["value"]] = result["item"]["value"].replace("http://www.wikidata.org/entity/", "")
-        to_add = result["pmid"]["value"]
-        if REDIS.get('pmid_to_pmcid__' + to_add) is None:
-            pmid.append(to_add)
+    for wd_item in whitelist:
+        if REDIS.get('pmid_to_pmcid__' + wikidata_to_pmid[wd_item]) is None:
+            pmid.append(wikidata_to_pmid[wd_item])
+    print('Done')
+
+    print('Total to process:', str(len(pmid)))
 
     packages = [pmid[x:x+200] for x in range(0, len(pmid), 200)]
 
@@ -37,12 +48,12 @@ def main():
             for response in blob["records"]:
                 if "pmcid" in response:
                     found = True
-                    print(wikidata_items[response["pmid"]] + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                    print(codeswitch.pmid_to_wikidata(response["pmid"]) + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
                     REDIS.set(
                         'pmid_to_pmcid__' + response["pmid"],
                         response["pmcid"].replace("PMC", ""))
                     if "doi" in response:
-                        print(wikidata_items[response["pmid"]] + "\tP356\t\"" + response["doi"].upper() + "\"")
+                        print(codeswitch.pmid_to_wikidata(response["pmid"]) + "\tP356\t\"" + response["doi"].upper() + "\"")
 
                 else:
                     REDIS.setex('pmid_to_pmcid__' + response["pmid"], '', timedelta(days=14))

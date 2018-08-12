@@ -6,7 +6,6 @@ def main():
 
     print('Getting all Wikidata items with P356...')
     wikidata_to_doi = codeswitch.hgetall('wikidata_to_P356')
-    wikidata_to_doi = {x: y.upper() for x, y in wikidata_to_doi.items()}
     print('Done')
 
     print('Getting all Wikidata items with P932 (so we can filter them out)...')
@@ -41,9 +40,11 @@ def main():
             for response in blob["records"]:
                 responsedoi = response["doi"].upper()
                 if "pmcid" in response:
-                    print(codeswitch.doi_to_wikidata(responsedoi) + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
-                    if "pmid" in response:
-                        print(codeswitch.doi_to_wikidata(responsedoi) + "\tP698\t\"" + response["pmid"] + "\"")
+                    get_wd = codeswitch.doi_to_wikidata(responsedoi)
+                    if get_wd is not None:
+                        print(get_wd + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                        if "pmid" in response:
+                            print(get_wd + "\tP698\t\"" + response["pmid"] + "\"")
 
 if __name__ == '__main__':
     main()
