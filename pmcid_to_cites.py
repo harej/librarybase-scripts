@@ -169,7 +169,7 @@ def main():
             bundle = ast.literal_eval(lookup.decode('UTF-8'))
             bundle = [int(x) for x in bundle]
             retrieve_date = lookup_retrieve_date.decode('UTF-8')
-            fasttrack[item.decode('utf-8')] = create_manifest_entry(item.decode('utf-8'), pmcid, bundle, retrieve_date)
+            fasttrack[item] = create_manifest_entry(item, pmcid, bundle, retrieve_date)
             if len(fasttrack) >= 50:
                 start_thread(UpdateGraphFast(thread_counter, "thread-" + str(thread_counter), fasttrack))
                 fasttrack = {}
