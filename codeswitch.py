@@ -1,23 +1,15 @@
 import redis
+from collections import OrderedDict
 from site_credentials import *
 
 REDIS = redis.Redis(host=redis_server, port=redis_port, password=redis_key)
 
-def identifier_generator(wd_prop, list_name, descending_order=True):
-    REDIS.delete(list_name)
-
-    identifier_list = REDIS.hgetall(wd_prop + '_to_wikidata')
-    identifier_list = [y.decode('utf-8') + '|' + x.decode('utf-8') for x, y in identifier_list.items()]
+def get_all_items(wd_prop, descending_order=True):
+    identifier_list = hgetall('wikidata_to_' + wd_prop)
+    identifier_list = [x + '|' + y for x, y in identifier_list.items()]
     identifier_list.sort(reverse=descending_order)
-    identifier_list = [x.split('|')[1] for x in identifier_list]
 
-    for entry in identifier_list:
-        REDIS.rpush(list_name, entry)
-
-    del identifier_list
-    
-    while REDIS.llen(list_name) > 0:
-        yield REDIS.lpop(list_name)
+    return OrderedDict({x.split('|')[0]: x.split('|')[1] for x in identifier_list})
 
 def hgetall(keyname):
     raw = REDIS.hgetall(keyname)

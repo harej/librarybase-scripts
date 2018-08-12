@@ -155,7 +155,7 @@ def main():
     fasttrack = {}
 
     # Iterating through PMCIDs and assigning to fast track or slow track
-    for pmcid, item in codeswitch.hgetall('P932_to_wikidata').items():
+    for item, pmcid in codeswitch.get_all_items('P932').items():
         lookup = REDIS.get('pmccite:' + str(pmcid))
         lookup_retrieve_date = REDIS.get('pmccite_ret:' + str(pmcid))
 
