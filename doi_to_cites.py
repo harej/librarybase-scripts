@@ -9,7 +9,7 @@ from citation_grapher import CitationGrapher
 
 print('Setting up globals')
 
-WRITE_THREAD_COUNT = 3
+WRITE_THREAD_COUNT = 2
 THREAD_LIMIT = WRITE_THREAD_COUNT + 2
 
 # Go from newest Wikidata QID to oldest?
