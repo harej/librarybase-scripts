@@ -24,8 +24,7 @@ def main():
     whitelist = list(set(whitelist) - set(blacklist))
     pmid = []
     for wd_item in whitelist:
-        if REDIS.get('pmid_to_pmcid__' + wikidata_to_pmid[wd_item]) is None:
-            pmid.append(wikidata_to_pmid[wd_item])
+        pmid.append(wikidata_to_pmid[wd_item])
     print('Done')
 
     print('Total to process:', str(len(pmid)))
@@ -33,30 +32,52 @@ def main():
     packages = [pmid[x:x+200] for x in range(0, len(pmid), 200)]
 
     for package in packages:
+        new_package = []
         query_string = ""
         for item in package:
             query_string += item + ","
-        query_string = query_string[:-1]  # Remove trailing comma
+            if REDIS.get('pmid_to_pmcid__' + item) is not None:
+                new_package.append(item)
+        if len(new_package) == 0:
+            continue
 
+        query_string = query_string[:-1]  # Remove trailing comma
         s = requests.get(url + query_string)
         try:
             blob = s.json()
         except ValueError:
             continue
 
+        to_lookup = []
+        manifest = {}
+
         if "records" in blob:
             for response in blob["records"]:
                 if "pmcid" in response:
-                    found = True
-                    print(codeswitch.pmid_to_wikidata(response["pmid"]) + "\tP932\t\"" + response["pmcid"].replace("PMC", "") + "\"")
+                    response_pmcid = response["pmcid"].replace("PMC", "")
                     REDIS.set(
                         'pmid_to_pmcid__' + response["pmid"],
-                        response["pmcid"].replace("PMC", ""))
+                        response_pmcid)
+
+                    to_lookup.append(response["pmid"])
+                    manifest[response["pmid"]] = {"P932": response_pmcid}
                     if "doi" in response:
-                        print(codeswitch.pmid_to_wikidata(response["pmid"]) + "\tP356\t\"" + response["doi"].upper() + "\"")
+                        manifest[response["pmid"]]["P356"] = response["doi"].upper()
 
                 else:
                     REDIS.setex('pmid_to_pmcid__' + response["pmid"], '', timedelta(days=14))
+
+        if len(to_lookup) > 0:
+            pmid_to_wikidata = {}
+            lookup = codeswitch.pmid_to_wikidata(to_lookup)
+            for position, result in enumerate(lookup):
+                if result is None:
+                    continue
+                pmid_to_wikidata[to_lookup[position]] = result
+
+            for pmid, blob in manifest.items():
+                for p_id, val in blob.items():
+                    print(pmid_to_wikidata[pmid] + "\t" + p_id + "\t" + val)
 
 if __name__ == '__main__':
     main()

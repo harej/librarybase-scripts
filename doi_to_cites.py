@@ -26,35 +26,41 @@ eq = EditQueue(
 
 print('Done setting up globals')
 
-def update_graph(doi, cites):
+def update_graph(doi, wd_item, cites):
     CG = CitationGrapher(eq)
-    CG.process_manifest({codeswitch.doi_to_wikidata(doi): (doi, tuple(cites), '+2018-01-21T00:00:00Z')})
-    print('. ', end='', flush=True)
+    CG.process_manifest({wd_item: (doi, tuple(cites), '+2018-01-21T00:00:00Z')})
 
 def main():
     with bzopen('assets/crossref_references.jsonl.bz2', 'r') as f:
         for line in f:
+            print('. ', end='', flush=True)
             while threading.active_count() >= THREAD_LIMIT:
                 time.sleep(0.25)
 
             mapping = json.loads(line)
             doi_x = list(mapping.keys())[0]
-            wd_x = codeswitch.doi_to_wikidata(doi_x)
-            if wd_x is None:
+            lookup = [doi_x]
+
+            for doi_y in mapping[doi_x]:
+                lookup.append(doi_y)
+
+            lookup = codeswitch.doi_to_wikidata(lookup)
+
+            if lookup[0] is None:
                 continue
 
             cites = []
-
-            for doi_y in mapping[doi_x]:
-                wd_y = codeswitch.doi_to_wikidata(doi_y)
+            for wd_y in lookup:
                 if wd_y is None:
                     continue
-                if wd_x == wd_y:
+                if wd_y == lookup[0]:
                     continue
                 cites.append(wd_y)
 
             if len(cites) > 0:
-                update_graph(doi_x, cites)
+                t = threading.Thread(target=update_graph, args =(doi_x, lookup[0], cites))
+                t.daemon = True
+                t.start()
 
 if __name__ == '__main__':
     main()

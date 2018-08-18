@@ -16,12 +16,23 @@ def hgetall(keyname):
     return {x.decode('utf-8'): y.decode('utf-8') for x, y in raw.items()}
 
 def hget(keyname, itemname):
-    raw = REDIS.hget(keyname, itemname)
+    if type(itemname) is str:
+        raw = REDIS.hget(keyname, itemname)
+        if raw is None:
+            return None
+        else:
+            return raw.decode('utf-8')
 
-    if raw is None:
-        return None
     else:
-        return raw.decode('utf-8')
+        raw = REDIS.hmget(keyname, itemname)
+        ret = []
+        for result in raw:
+            if result is None:
+                ret.append(None)
+            else:
+                ret.append(result.decode('utf-8'))
+
+        return ret
 
 def doi_to_wikidata(doi):
     return hget('P356_to_wikidata', doi)
