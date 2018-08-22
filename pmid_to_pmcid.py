@@ -77,7 +77,7 @@ def main():
 
             for pmid, blob in manifest.items():
                 for p_id, val in blob.items():
-                    print(pmid_to_wikidata[pmid] + "\t" + p_id + "\t" + val)
+                    print(pmid_to_wikidata[pmid] + "\t" + p_id + "\t\"" + val + "\"")
 
 if __name__ == '__main__':
     main()

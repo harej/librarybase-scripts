@@ -26,7 +26,7 @@ def main():
             wd_value = match.group(3)
 
             if wd_prop in manifest:
-                print('Up to', wd_item, end='\r')
+                #print('Up to', wd_item, end='\r')
                 to_add[wd_prop].append((wd_item, wd_value))
 
                 if len(to_add[wd_prop]) >= 10000:
