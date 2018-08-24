@@ -38,7 +38,7 @@ print('Done setting up globals')
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
-        cited_item = codeswitch.pmid_to_wikidata(cited_id)
+        cited_item = codeswitch.pmid_to_wikidata(cited_id)[0]
         if cited_item is None:
             continue
         if wikidata_item == cited_item:
@@ -106,7 +106,7 @@ class UpdateGraph(threading.Thread):
         manifest = {}  # dict {item: tuple}
         for result in blob["linksets"]:
             relevant_pmcid = result["ids"][0]
-            relevant_item = codeswitch.pmcid_to_wikidata(relevant_pmcid)
+            relevant_item = codeswitch.pmcid_to_wikidata(relevant_pmcid)[0]
             if relevant_item is None:
                 continue
             REDIS.setex(
