@@ -10,7 +10,8 @@ from citation_grapher import CitationGrapher
 print('Setting up globals')
 
 WRITE_THREAD_COUNT = 2
-THREAD_LIMIT = WRITE_THREAD_COUNT + 2
+READ_THREAD_COUNT = 100
+THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 1
 
 # Go from newest Wikidata QID to oldest?
 DESCENDING_ORDER = True
@@ -30,6 +31,25 @@ def update_graph(doi, wd_item, cites):
     CG = CitationGrapher(eq)
     CG.process_manifest({wd_item: (doi, tuple(cites), '+2018-01-21T00:00:00Z')})
 
+def process_bundle(lookup, doi_x):
+    lookup = codeswitch.doi_to_wikidata(lookup)
+
+    if lookup[0] is None:
+        return
+
+    cites = []
+    for wd_y in lookup:
+        if wd_y is None:
+            continue
+        if wd_y == lookup[0]:
+            continue
+        cites.append(wd_y)
+
+    if len(cites) > 0:
+        t = threading.Thread(target=update_graph, args=(doi_x, lookup[0], cites))
+        t.daemon = True
+        t.start()
+
 def main():
     with bzopen('assets/crossref_references.jsonl.bz2', 'r') as f:
         for line in f:
@@ -44,23 +64,9 @@ def main():
             for doi_y in mapping[doi_x]:
                 lookup.append(doi_y)
 
-            lookup = codeswitch.doi_to_wikidata(lookup)
-
-            if lookup[0] is None:
-                continue
-
-            cites = []
-            for wd_y in lookup:
-                if wd_y is None:
-                    continue
-                if wd_y == lookup[0]:
-                    continue
-                cites.append(wd_y)
-
-            if len(cites) > 0:
-                t = threading.Thread(target=update_graph, args =(doi_x, lookup[0], cites))
-                t.daemon = True
-                t.start()
+            t = threading.Thread(target=process_bundle, args=(lookup, doi_x))
+            t.daemon = True
+            t.start()
 
 if __name__ == '__main__':
     main()
