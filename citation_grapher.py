@@ -12,7 +12,10 @@ class CitationGrapher:
             url += wikidata_id + '|'
         url = url[:-1]  # remove trailing pipe
 
-        r = requests.get(url).json()['entities']
+        try:
+            r = requests.get(url).json()['entities']
+        except:
+           return
 
         for wikidata_id, blob in r.items():
             # (pmcid, cites, retrieve_date)

@@ -90,7 +90,7 @@ class EditQueue:
             sleep(0.25)
         # Shedding some weight to take up less space in RAM.
         relevant_item = int(relevant_item.replace('Q', ''))
-        cites = tuple([int(x.replace('Q', '')) for x in cites])
+        cites = tuple([int(x.replace('Q', '')) for x in cites if x is not None])
         self.editqueue.put((relevant_item, relevant_external_id, retrieve_date, cites))
 
     def done(self):

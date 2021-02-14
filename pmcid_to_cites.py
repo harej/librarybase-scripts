@@ -1,6 +1,7 @@
 import ast
 import arrow
 import codeswitch
+import json
 import redis
 import requests
 import threading
@@ -13,11 +14,11 @@ from site_credentials import *
 print('Setting up globals')
 
 WRITE_THREAD_COUNT = 2
-READ_THREAD_COUNT = 5
+READ_THREAD_COUNT = 1
 THREAD_LIMIT = WRITE_THREAD_COUNT + READ_THREAD_COUNT + 2
 
 # Go from newest Wikidata QID to oldest?
-DESCENDING_ORDER = True
+DESCENDING_ORDER = False
 
 eq = EditQueue(
          source='Q229883',
@@ -38,9 +39,11 @@ print('Done setting up globals')
 def create_manifest_entry(wikidata_item, pmcid, bundle, retrieve_date):
     cites = []
     for cited_id in bundle:
-        cited_item = codeswitch.pmid_to_wikidata(cited_id)[0]
+        cited_item = codeswitch.pmid_to_wikidata(cited_id)
         if cited_item is None:
             continue
+        else:
+            cited_item = cited_item[0]
         if wikidata_item == cited_item:
             continue
         cites.append(cited_item)
@@ -111,19 +114,19 @@ class UpdateGraph(threading.Thread):
                 continue
             REDIS.setex(
                 'pmccite_ret:' + str(relevant_pmcid),
-                retrieve_date,
-                timedelta(days=28))
+                timedelta(days=28),
+                retrieve_date)
             if 'linksetdbs' not in result:
                 REDIS.setex(
                     'pmccite:' + str(relevant_pmcid),
-                    [],
-                    timedelta(days=28))
+                    timedelta(days=28),
+                    "[]")
                 continue
 
             REDIS.setex(
                 'pmccite:' + str(relevant_pmcid),
-                result["linksetdbs"][0]["links"],
-                timedelta(days=28))
+                timedelta(days=28),
+                json.dumps(result["linksetdbs"][0]["links"]))
             add_to_manifest = create_manifest_entry(
                 relevant_item,
                 relevant_pmcid,
@@ -134,7 +137,8 @@ class UpdateGraph(threading.Thread):
         if len(manifest) > 0:
             CG = CitationGrapher(eq)
             CG.process_manifest(manifest)
-            print('Processed ' + str(len(manifest)) + ' entries')
+            if len(manifest) > 1:
+                print('Processed ' + str(len(manifest)) + ' entries')
 
 def start_thread(thread):
     global thread_counter
@@ -157,16 +161,17 @@ def main():
     # Iterating through PMCIDs and assigning to fast track or slow track
     for item, pmcid in codeswitch.get_all_items('P932').items():
         lookup = REDIS.get('pmccite:' + str(pmcid))
+        if lookup is not None:
+            lookup = json.loads(lookup)
         lookup_retrieve_date = REDIS.get('pmccite_ret:' + str(pmcid))
-
         if lookup is None or lookup_retrieve_date is None:
             slowtrack[item] = pmcid
             if len(slowtrack) >= 50:
                 start_thread(UpdateGraph(thread_counter, "thread-" + str(thread_counter), slowtrack))
                 slowtrack = {}
-
         else:
-            bundle = ast.literal_eval(lookup.decode('UTF-8'))
+            #bundle = ast.literal_eval(lookup.decode('UTF-8'))
+            bundle = lookup
             bundle = [int(x) for x in bundle]
             retrieve_date = lookup_retrieve_date.decode('UTF-8')
             fasttrack[item] = create_manifest_entry(item, pmcid, bundle, retrieve_date)

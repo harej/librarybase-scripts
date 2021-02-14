@@ -1,6 +1,7 @@
 import arrow
 import re
 import redis
+import requests
 from bz2 import BZ2File as bzopen
 from site_credentials import redis_server, redis_port, redis_key
 
@@ -11,10 +12,18 @@ def main():
     # <http://www.wikidata.org/entity/Q47133351> <http://www.wikidata.org/prop/direct/P356> "10.1002/EJP.1050" .
     REGEX = r'^<http:\/\/www\.wikidata\.org\/entity\/(Q\d+)> <http:\/\/www.wikidata.org\/prop\/direct\/(P\d+)> "(.*?)" \.$'
     manifest = ['P356', 'P698', 'P932', 'P2880']
-    dump_location = '/public/dumps/public/wikidatawiki/entities/latest-truthy.nt.bz2'
+    dump_location = 'https://dumps.wikimedia.org/wikidatawiki/entities/latest-truthy.nt.bz2'
     to_add = {x: [] for x in manifest}
 
-    with bzopen(dump_location, 'r') as f:
+    print("Downloading latest dump")
+    with requests.get(dump_location, stream=True) as r:
+        print("Saving dump")
+        r.raise_for_status()
+        with open('/tmp/latest-truthy.nt.bz2', 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+    print("Opening dump")
+    with bzopen('/tmp/latest-truthy.nt.bz2', 'r') as f:
         for line in f:
             line = line.decode('utf-8')
             match = re.match(REGEX, line)
